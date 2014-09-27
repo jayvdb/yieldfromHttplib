@@ -66,6 +66,7 @@ Req-started-unread-response    _CS_REQ_STARTED    <response_class>
 Req-sent-unread-response       _CS_REQ_SENT       <response_class>
 """
 
+import asyncio
 import email.parser
 import email.message
 import io
@@ -246,6 +247,7 @@ class HTTPMessage(email.message.Message):
                 lst.append(line)
         return lst
 
+@asyncio.coroutine
 def parse_headers(fp, _class=HTTPMessage):
     """Parses only RFC2822 headers from a file pointer.
 
@@ -258,7 +260,7 @@ def parse_headers(fp, _class=HTTPMessage):
     """
     headers = []
     while True:
-        line = fp.readline(_MAXLINE + 1)
+        line = yield from fp.readline() #_MAXLINE + 1)
         if len(line) > _MAXLINE:
             raise LineTooLong("header line")
         headers.append(line)
@@ -270,7 +272,7 @@ def parse_headers(fp, _class=HTTPMessage):
     return email.parser.Parser(_class=_class).parsestr(hstring)
 
 
-class HTTPResponse(io.BufferedIOBase):
+class HTTPResponse(io.IOBase): #io.BufferedIOBase):
 
     # See RFC 2616 sec 19.6 and RFC 1945 sec 6 for details.
 
@@ -287,7 +289,10 @@ class HTTPResponse(io.BufferedIOBase):
         # happen if a self.fp.read() is done (without a size) whether
         # self.fp is buffered or not.  So, no self.fp.read() by
         # clients unless they know what they are doing.
-        self.fp = sock.makefile("rb")
+        self.sock = sock
+        self.fp = None
+        #self.fp, jnk = yield from asyncio.open_connection(sock=sock)
+        #self.fp = sock.makefile("rb")
         self.debuglevel = debuglevel
         self._method = method
 
@@ -309,8 +314,18 @@ class HTTPResponse(io.BufferedIOBase):
         self.length = _UNKNOWN          # number of bytes left in response
         self.will_close = _UNKNOWN      # conn will close at end of response
 
+    @asyncio.coroutine
+    def init(self):
+        assert self.fp is None
+        reader, writer = yield from asyncio.open_connection(sock=self.sock)
+        writer.write_eof()
+        self.fp = reader
+        self.sock = None
+
+    @asyncio.coroutine
     def _read_status(self):
-        line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+        line = yield from self.fp.readline() #_MAXLINE + 1)
+        line = str(line, "iso-8859-1")
         if len(line) > _MAXLINE:
             raise LineTooLong("status line")
         if self.debuglevel > 0:
@@ -341,6 +356,7 @@ class HTTPResponse(io.BufferedIOBase):
             raise BadStatusLine(line)
         return version, status, reason
 
+    @asyncio.coroutine
     def begin(self):
         if self.headers is not None:
             # we've already started reading the response
@@ -348,12 +364,12 @@ class HTTPResponse(io.BufferedIOBase):
 
         # read until we get a non-100 response
         while True:
-            version, status, reason = self._read_status()
+            version, status, reason = yield from self._read_status()
             if status != CONTINUE:
                 break
             # skip the header from the 100 response
             while True:
-                skip = self.fp.readline(_MAXLINE + 1)
+                skip = yield from self.fp.readline() #_MAXLINE + 1)
                 if len(skip) > _MAXLINE:
                     raise LineTooLong("header line")
                 skip = skip.strip()
@@ -372,7 +388,7 @@ class HTTPResponse(io.BufferedIOBase):
         else:
             raise UnknownProtocol(version)
 
-        self.headers = self.msg = parse_headers(self.fp)
+        self.headers = self.msg = yield from parse_headers(self.fp)
 
         if self.debuglevel > 0:
             for hdr in self.headers:
@@ -452,9 +468,9 @@ class HTTPResponse(io.BufferedIOBase):
         return True
 
     def _close_conn(self):
-        fp = self.fp
+        fp = self.fp      # maybe .drain() and make coroutine
         self.fp = None
-        fp.close()
+        #fp.close()
 
     def close(self):
         super().close() # set "closed" flag
@@ -467,9 +483,10 @@ class HTTPResponse(io.BufferedIOBase):
     # the "raw stream" that BufferedReader expects.
 
     def flush(self):
-        super().flush()
-        if self.fp:
-            self.fp.flush()
+        pass
+        #super().flush()
+        #if self.fp:
+        #    self.fp.flush()
 
     def readable(self):
         return True
@@ -486,6 +503,7 @@ class HTTPResponse(io.BufferedIOBase):
         #          called, meaning self.isclosed() is meaningful.
         return self.fp is None
 
+    @asyncio.coroutine
     def read(self, amt=None):
         if self.fp is None:
             return b""
@@ -497,20 +515,20 @@ class HTTPResponse(io.BufferedIOBase):
         if amt is not None:
             # Amount is given, implement using readinto
             b = bytearray(amt)
-            n = self.readinto(b)
+            n = yield from self.readinto(b)
             return memoryview(b)[:n].tobytes()
         else:
             # Amount is not given (unbounded read) so we must check self.length
             # and self.chunked
 
             if self.chunked:
-                return self._readall_chunked()
+                return (yield from self._readall_chunked())
 
             if self.length is None:
-                s = self.fp.read()
+                s = yield from self.fp.read()
             else:
                 try:
-                    s = self._safe_read(self.length)
+                    s = yield from self._safe_read(self.length)
                 except IncompleteRead:
                     self._close_conn()
                     raise
@@ -518,6 +536,7 @@ class HTTPResponse(io.BufferedIOBase):
             self._close_conn()        # we read everything
             return s
 
+    @asyncio.coroutine
     def readinto(self, b):
         if self.fp is None:
             return 0
@@ -527,7 +546,7 @@ class HTTPResponse(io.BufferedIOBase):
             return 0
 
         if self.chunked:
-            return self._readinto_chunked(b)
+            return (yield from self._readinto_chunked(b))
 
         if self.length is not None:
             if len(b) > self.length:
@@ -537,7 +556,11 @@ class HTTPResponse(io.BufferedIOBase):
         # we do not use _safe_read() here because this may be a .will_close
         # connection, and the user is reading more bytes than will be provided
         # (for example, reading in 1k chunks)
-        n = self.fp.readinto(b)
+        bLen = len(b)
+        #n = yield from self.fp.readinto(b)
+        _b = yield from self.fp.read(bLen)
+        n = len(_b)
+        b[0:n] = _b
         if not n and b:
             # Ideally, we would raise IncompleteRead if the content-length
             # wasn't satisfied, but it might break compatibility.
@@ -548,9 +571,10 @@ class HTTPResponse(io.BufferedIOBase):
                 self._close_conn()
         return n
 
+    @asyncio.coroutine
     def _read_next_chunk_size(self):
         # Read the next chunk size from the file
-        line = self.fp.readline(_MAXLINE + 1)
+        line = yield from self.fp.readline() #_MAXLINE + 1)
         if len(line) > _MAXLINE:
             raise LineTooLong("chunk size")
         i = line.find(b";")
@@ -564,11 +588,12 @@ class HTTPResponse(io.BufferedIOBase):
             self._close_conn()
             raise
 
+    @asyncio.coroutine
     def _read_and_discard_trailer(self):
         # read and discard trailer up to the CRLF terminator
         ### note: we shouldn't have any trailers!
         while True:
-            line = self.fp.readline(_MAXLINE + 1)
+            line = yield from self.fp.readline() #_MAXLINE + 1)
             if len(line) > _MAXLINE:
                 raise LineTooLong("trailer line")
             if not line:
@@ -578,6 +603,7 @@ class HTTPResponse(io.BufferedIOBase):
             if line in (b'\r\n', b'\n', b''):
                 break
 
+    @asyncio.coroutine
     def _get_chunk_left(self):
         # return self.chunk_left, reading a new chunk if necessary.
         # chunk_left == 0: at the end of the current chunk, need to close it
@@ -588,51 +614,54 @@ class HTTPResponse(io.BufferedIOBase):
         if not chunk_left: # Can be 0 or None
             if chunk_left is not None:
                 # We are at the end of chunk. dicard chunk end
-                self._safe_read(2)  # toss the CRLF at the end of the chunk
+                yield from self._safe_read(2)  # toss the CRLF at the end of the chunk
             try:
-                chunk_left = self._read_next_chunk_size()
+                chunk_left = yield from self._read_next_chunk_size()
             except ValueError:
                 raise IncompleteRead(b'')
             if chunk_left == 0:
                 # last chunk: 1*("0") [ chunk-extension ] CRLF
-                self._read_and_discard_trailer()
+                yield from self._read_and_discard_trailer()
                 # we read everything; close the "file"
                 self._close_conn()
                 chunk_left = None
             self.chunk_left = chunk_left
         return chunk_left
 
+    @asyncio.coroutine
     def _readall_chunked(self):
         assert self.chunked != _UNKNOWN
         value = []
         try:
             while True:
-                chunk_left = self._get_chunk_left()
+                chunk_left = yield from self._get_chunk_left()
                 if chunk_left is None:
                     break
-                value.append(self._safe_read(chunk_left))
+                _v = yield from self._safe_read(chunk_left)
+                value.append(_v)
                 self.chunk_left = 0
             return b''.join(value)
         except IncompleteRead:
             raise IncompleteRead(b''.join(value))
 
+    @asyncio.coroutine
     def _readinto_chunked(self, b):
         assert self.chunked != _UNKNOWN
         total_bytes = 0
         mvb = memoryview(b)
         try:
             while True:
-                chunk_left = self._get_chunk_left()
+                chunk_left = yield from self._get_chunk_left()
                 if chunk_left is None:
                     return total_bytes
 
                 if len(mvb) <= chunk_left:
-                    n = self._safe_readinto(mvb)
+                    n = yield from self._safe_readinto(mvb)
                     self.chunk_left = chunk_left - n
                     return total_bytes + n
 
                 temp_mvb = mvb[:chunk_left]
-                n = self._safe_readinto(temp_mvb)
+                n = yield from self._safe_readinto(temp_mvb)
                 mvb = mvb[n:]
                 total_bytes += n
                 self.chunk_left = 0
@@ -640,6 +669,7 @@ class HTTPResponse(io.BufferedIOBase):
         except IncompleteRead:
             raise IncompleteRead(bytes(b[0:total_bytes]))
 
+    @asyncio.coroutine
     def _safe_read(self, amt):
         """Read the number of bytes requested, compensating for partial reads.
 
@@ -656,13 +686,14 @@ class HTTPResponse(io.BufferedIOBase):
         """
         s = []
         while amt > 0:
-            chunk = self.fp.read(min(amt, MAXAMOUNT))
+            chunk = yield from self.fp.read(min(amt, MAXAMOUNT))
             if not chunk:
                 raise IncompleteRead(b''.join(s), amt)
             s.append(chunk)
             amt -= len(chunk)
         return b"".join(s)
 
+    @asyncio.coroutine
     def _safe_readinto(self, b):
         """Same as _safe_read, but for reading into a buffer."""
         total_bytes = 0
@@ -670,84 +701,93 @@ class HTTPResponse(io.BufferedIOBase):
         while total_bytes < len(b):
             if MAXAMOUNT < len(mvb):
                 temp_mvb = mvb[0:MAXAMOUNT]
-                n = self.fp.readinto(temp_mvb)
             else:
-                n = self.fp.readinto(mvb)
+                temp_mvb = mvb[:]
+            bLen = len(temp_mvb)
+            _b = yield from self.fp.read(bLen)
+            n = len(_b)
+            temp_mvb[0:n] = _b
+#            n = yield from self.fp.readinto(temp_mvb)
             if not n:
                 raise IncompleteRead(bytes(mvb[0:total_bytes]), len(b))
             mvb = mvb[n:]
             total_bytes += n
         return total_bytes
 
-    def read1(self, n=-1):
-        """Read with at most one underlying system call.  If at least one
-        byte is buffered, return that instead.
-        """
-        if self.fp is None or self._method == "HEAD":
-            return b""
-        if self.chunked:
-            return self._read1_chunked(n)
-        try:
-            result = self.fp.read1(n)
-        except ValueError:
-            if n >= 0:
-                raise
-            # some implementations, like BufferedReader, don't support -1
-            # Read an arbitrarily selected largeish chunk.
-            result = self.fp.read1(16*1024)
-        if not result and n:
-            self._close_conn()
-        return result
+    # @asyncio.coroutine
+    # def read1(self, n=-1):
+    #     """Read with at most one underlying system call.  If at least one
+    #     byte is buffered, return that instead.
+    #     """
+    #     if self.fp is None or self._method == "HEAD":
+    #         return b""
+    #     if self.chunked:
+    #         return self._read1_chunked(n)
+    #     try:
+    #         result = yield from self.fp.read1(n)
+    #     except ValueError:
+    #         if n >= 0:
+    #             raise
+    #         # some implementations, like BufferedReader, don't support -1
+    #         # Read an arbitrarily selected largeish chunk.
+    #         result = yield from self.fp.read1(16*1024)
+    #     if not result and n:
+    #         self._close_conn()
+    #     return result
 
-    def peek(self, n=-1):
-        # Having this enables IOBase.readline() to read more than one
-        # byte at a time
-        if self.fp is None or self._method == "HEAD":
-            return b""
-        if self.chunked:
-            return self._peek_chunked(n)
-        return self.fp.peek(n)
+    # def peek(self, n=-1):
+    #     # Having this enables IOBase.readline() to read more than one
+    #     # byte at a time
+    #     if self.fp is None or self._method == "HEAD":
+    #         return b""
+    #     if self.chunked:
+    #         return self._peek_chunked(n)
+    #     return self.fp.peek(n)
 
-    def readline(self, limit=-1):
-        if self.fp is None or self._method == "HEAD":
-            return b""
-        if self.chunked:
-            # Fallback to IOBase readline which uses peek() and read()
-            return super().readline(limit)
-        result = self.fp.readline(limit)
-        if not result and limit:
-            self._close_conn()
-        return result
+    # @asyncio.coroutine
+    # def readline(self, limit=-1):
+    #     if self.fp is None or self._method == "HEAD":
+    #         return b""
+    #     if self.chunked:
+    #         # Fallback to IOBase readline which uses peek() and read()
+    #         return super().readline(limit)
+    #     result = yield from self.fp.readline(limit)
+    #     if not result and limit:
+    #         self._close_conn()
+    #     return result
+    #
+    # @asyncio.coroutine
+    # def _read1_chunked(self, n):
+    #     # Strictly speaking, _get_chunk_left() may cause more than one read,
+    #     # but that is ok, since that is to satisfy the chunked protocol.
+    #     chunk_left = self._get_chunk_left()
+    #     if chunk_left is None or n == 0:
+    #         return b''
+    #     if not (0 <= n <= chunk_left):
+    #         n = chunk_left # if n is negative or larger than chunk_left
+    #     read = yield from self.fp.read1(n)
+    #     self.chunk_left -= len(read)
+    #     if not read:
+    #         raise IncompleteRead(b"")
+    #     return read
 
-    def _read1_chunked(self, n):
-        # Strictly speaking, _get_chunk_left() may cause more than one read,
-        # but that is ok, since that is to satisfy the chunked protocol.
-        chunk_left = self._get_chunk_left()
-        if chunk_left is None or n == 0:
-            return b''
-        if not (0 <= n <= chunk_left):
-            n = chunk_left # if n is negative or larger than chunk_left
-        read = self.fp.read1(n)
-        self.chunk_left -= len(read)
-        if not read:
-            raise IncompleteRead(b"")
-        return read
-
-    def _peek_chunked(self, n):
-        # Strictly speaking, _get_chunk_left() may cause more than one read,
-        # but that is ok, since that is to satisfy the chunked protocol.
-        try:
-            chunk_left = self._get_chunk_left()
-        except IncompleteRead:
-            return b'' # peek doesn't worry about protocol
-        if chunk_left is None:
-            return b'' # eof
-        # peek is allowed to return more than requested.  Just request the
-        # entire chunk, and truncate what we get.
-        return self.fp.peek(chunk_left)[:chunk_left]
+    # @asyncio.coroutine
+    # def _peek_chunked(self, n):
+    #     # Strictly speaking, _get_chunk_left() may cause more than one read,
+    #     # but that is ok, since that is to satisfy the chunked protocol.
+    #     try:
+    #         chunk_left = self._get_chunk_left()
+    #     except IncompleteRead:
+    #         return b'' # peek doesn't worry about protocol
+    #     if chunk_left is None:
+    #         return b'' # eof
+    #     # peek is allowed to return more than requested.  Just request the
+    #     # entire chunk, and truncate what we get.
+    #     r = yield from self.fp.peek(chunk_left)[:chunk_left]
+    #     return r
 
     def fileno(self):
-        return self.fp.fileno()
+        return None #self.fp.fileno()
 
     def getheader(self, name, default=None):
         if self.headers is None:
@@ -780,6 +820,11 @@ class HTTPResponse(io.BufferedIOBase):
     def getcode(self):
         return self.status
 
+
+def create_connection(*args, **kwargs):
+    return socket.create_connection(*args, **kwargs)  # todo - make async
+
+
 class HTTPConnection:
 
     _http_vsn = 11
@@ -798,8 +843,9 @@ class HTTPConnection:
     # as a reasonable estimate of the maximum MSS.
     mss = 16384
 
-    def __init__(self, host, port=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
-                 source_address=None):
+    loop = asyncio.get_event_loop()
+
+    def __init__(self, host, port=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
         self.timeout = timeout
         self.source_address = source_address
         self.sock = None
@@ -815,7 +861,7 @@ class HTTPConnection:
 
         # This is stored as an instance variable to allow unit
         # tests to replace it with a suitable mockup
-        self._create_connection = socket.create_connection
+        self._create_connection = create_connection
 
     def set_tunnel(self, host, port=None, headers=None):
         """Set up host and port for HTTP CONNECT tunnelling.
@@ -865,27 +911,28 @@ class HTTPConnection:
     def set_debuglevel(self, level):
         self.debuglevel = level
 
+    @asyncio.coroutine
     def _tunnel(self):
         (host, port) = self._get_hostport(self._tunnel_host,
                                           self._tunnel_port)
         connect_str = "CONNECT %s:%d HTTP/1.0\r\n" % (host, port)
         connect_bytes = connect_str.encode("ascii")
-        self.send(connect_bytes)
+        yield from self.send(connect_bytes)
         for header, value in self._tunnel_headers.items():
             header_str = "%s: %s\r\n" % (header, value)
             header_bytes = header_str.encode("latin-1")
-            self.send(header_bytes)
-        self.send(b'\r\n')
+            yield from self.send(header_bytes)
+        yield from self.send(b'\r\n')
 
         response = self.response_class(self.sock, method=self._method)
-        (version, code, message) = response._read_status()
+        yield from response.init()
+        (version, code, message) = yield from response._read_status()
 
         if code != 200:
             self.close()
-            raise OSError("Tunnel connection failed: %d %s" % (code,
-                                                               message.strip()))
+            raise OSError("Tunnel connection failed: %d %s" % (code, message.strip()))
         while True:
-            line = response.fp.readline(_MAXLINE + 1)
+            line = yield from response.fp.readline() #_MAXLINE + 1)
             if len(line) > _MAXLINE:
                 raise LineTooLong("header line")
             if not line:
@@ -894,13 +941,14 @@ class HTTPConnection:
             if line in (b'\r\n', b'\n', b''):
                 break
 
+    @asyncio.coroutine
     def connect(self):
         """Connect to the host and port specified in __init__."""
         self.sock = self._create_connection((self.host,self.port),
                                             self.timeout, self.source_address)
 
         if self._tunnel_host:
-            self._tunnel()
+            yield from self._tunnel()
 
     def close(self):
         """Close the connection to the HTTP server."""
@@ -912,6 +960,7 @@ class HTTPConnection:
             self.__response = None
         self.__state = _CS_IDLE
 
+    @asyncio.coroutine
     def send(self, data):
         """Send `data' to the server.
         ``data`` can be a string object, a bytes object, an array object, a
@@ -920,7 +969,7 @@ class HTTPConnection:
 
         if self.sock is None:
             if self.auto_open:
-                self.connect()
+                yield from self.connect()
             else:
                 raise NotConnected()
 
@@ -948,14 +997,14 @@ class HTTPConnection:
                     break
                 if encode:
                     datablock = datablock.encode("iso-8859-1")
-                self.sock.sendall(datablock)
+                yield from self.loop.sock_sendall(self.sock, datablock)
             return
         try:
-            self.sock.sendall(data)
+            yield from self.loop.sock_sendall(self.sock, data)
         except TypeError:
             if isinstance(data, collections.Iterable):
                 for d in data:
-                    self.sock.sendall(d)
+                    yield from self.loop.sock_sendall(self.sock, d)
             else:
                 raise TypeError("data should be a bytes-like object "
                                 "or an iterable, got %r" % type(data))
@@ -967,6 +1016,7 @@ class HTTPConnection:
         """
         self._buffer.append(s)
 
+    @asyncio.coroutine
     def _send_output(self, message_body=None):
         """Send the currently buffered request and clear the buffer.
 
@@ -985,11 +1035,11 @@ class HTTPConnection:
         if isinstance(message_body, bytes) and len(message_body) < self.mss:
             msg += message_body
             message_body = None
-        self.send(msg)
+        yield from self.send(msg)
         if message_body is not None:
             # message_body was not a string (i.e. it is a file), and
             # we must run the risk of Nagle.
-            self.send(message_body)
+            yield from self.send(message_body)
 
     def putrequest(self, method, url, skip_host=0, skip_accept_encoding=0):
         """Send a request to the server.
@@ -1134,6 +1184,7 @@ class HTTPConnection:
         header = header + b': ' + value
         self._output(header)
 
+    @asyncio.coroutine
     def endheaders(self, message_body=None):
         """Indicate that the last header line has been sent to the server.
 
@@ -1147,11 +1198,12 @@ class HTTPConnection:
             self.__state = _CS_REQ_SENT
         else:
             raise CannotSendHeader()
-        self._send_output(message_body)
+        yield from self._send_output(message_body)
 
+    @asyncio.coroutine
     def request(self, method, url, body=None, headers={}):
         """Send a complete request to the server."""
-        self._send_request(method, url, body, headers)
+        yield from self._send_request(method, url, body, headers)
 
     def _set_content_length(self, body):
         # Set the content-length based on the body.
@@ -1170,6 +1222,7 @@ class HTTPConnection:
         if thelen is not None:
             self.putheader('Content-Length', thelen)
 
+    @asyncio.coroutine
     def _send_request(self, method, url, body, headers):
         # Honor explicitly requested Host: and Accept-Encoding: headers.
         header_names = dict.fromkeys([k.lower() for k in headers])
@@ -1189,8 +1242,9 @@ class HTTPConnection:
             # RFC 2616 Section 3.7.1 says that text default has a
             # default charset of iso-8859-1.
             body = body.encode('iso-8859-1')
-        self.endheaders(body)
+        yield from self.endheaders(body)
 
+    @asyncio.coroutine
     def getresponse(self):
         """Get the response from the server.
 
@@ -1228,12 +1282,12 @@ class HTTPConnection:
             raise ResponseNotReady(self.__state)
 
         if self.debuglevel > 0:
-            response = self.response_class(self.sock, self.debuglevel,
-                                           method=self._method)
+            response = self.response_class(self.sock, self.debuglevel, method=self._method)
         else:
             response = self.response_class(self.sock, method=self._method)
+        yield from response.init()
 
-        response.begin()
+        yield from response.begin()
         assert response.will_close != _UNKNOWN
         self.__state = _CS_IDLE
 
@@ -1257,50 +1311,51 @@ else:
         default_port = HTTPS_PORT
 
         # XXX Should key_file and cert_file be deprecated in favour of context?
-
-        def __init__(self, host, port=None, key_file=None, cert_file=None,
-                     timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
-                     source_address=None, *, context=None,
-                     check_hostname=None):
-            super(HTTPSConnection, self).__init__(host, port, timeout,
-                                                  source_address)
-            self.key_file = key_file
-            self.cert_file = cert_file
-            if context is None:
-                context = ssl._create_stdlib_context()
-            will_verify = context.verify_mode != ssl.CERT_NONE
-            if check_hostname is None:
-                check_hostname = will_verify
-            elif check_hostname and not will_verify:
-                raise ValueError("check_hostname needs a SSL context with "
-                                 "either CERT_OPTIONAL or CERT_REQUIRED")
-            if key_file or cert_file:
-                context.load_cert_chain(cert_file, key_file)
-            self._context = context
-            self._check_hostname = check_hostname
-
-        def connect(self):
-            "Connect to a host on a given (SSL) port."
-
-            super().connect()
-
-            if self._tunnel_host:
-                server_hostname = self._tunnel_host
-            else:
-                server_hostname = self.host
-            sni_hostname = server_hostname if ssl.HAS_SNI else None
-
-            self.sock = self._context.wrap_socket(self.sock,
-                                                  server_hostname=sni_hostname)
-            if not self._context.check_hostname and self._check_hostname:
-                try:
-                    ssl.match_hostname(self.sock.getpeercert(), server_hostname)
-                except Exception:
-                    self.sock.shutdown(socket.SHUT_RDWR)
-                    self.sock.close()
-                    raise
-
-    __all__.append("HTTPSConnection")
+    #
+    #     def __init__(self, host, key_file=None, port=None, cert_file=None,
+    #                  timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+    #                  source_address=None, *, context=None,
+    #                  check_hostname=None):
+    #         super(HTTPSConnection, self).__init__(host, port, timeout,
+    #         super(HTTPSConnection, self).__init__(host, port, timeout,
+    #                                               source_address)
+    #         self.key_file = key_file
+    #         self.cert_file = cert_file
+    #         if context is None:
+    #             context = ssl._create_stdlib_context()
+    #         will_verify = context.verify_mode != ssl.CERT_NONE
+    #         if check_hostname is None:
+    #             check_hostname = will_verify
+    #         elif check_hostname and not will_verify:
+    #             raise ValueError("check_hostname needs a SSL context with "
+    #                              "either CERT_OPTIONAL or CERT_REQUIRED")
+    #         if key_file or cert_file:
+    #             context.load_cert_chain(cert_file, key_file)
+    #         self._context = context
+    #         self._check_hostname = check_hostname
+    #
+    #     def connect(self):
+    #         "Connect to a host on a given (SSL) port."
+    #
+    #         super().connect()
+    #
+    #         if self._tunnel_host:
+    #             server_hostname = self._tunnel_host
+    #         else:
+    #             server_hostname = self.host
+    #         sni_hostname = server_hostname if ssl.HAS_SNI else None
+    #
+    #         self.sock = self._context.wrap_socket(self.sock,
+    #                                               server_hostname=sni_hostname)
+    #         if not self._context.check_hostname and self._check_hostname:
+    #             try:
+    #                 ssl.match_hostname(self.sock.getpeercert(), server_hostname)
+    #             except Exception:
+    #                 self.sock.shutdown(socket.SHUT_RDWR)
+    #                 self.sock.close()
+    #                 raise
+    #
+    # __all__.append("HTTPSConnection")
 
 class HTTPException(Exception):
     # Subclasses that define an __init__ must call Exception.__init__

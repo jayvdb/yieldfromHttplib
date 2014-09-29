@@ -180,7 +180,7 @@ class HeaderTests(TestCase):
                 list.append(self, item)
 
         @asyncio.coroutine
-        def _temp():
+        def _run():
             for explicit_header in True, False:
                 for header in 'Content-length', 'Host', 'Accept-encoding':
                     conn = aioclient.HTTPConnection(*CONNECT)
@@ -195,7 +195,7 @@ class HeaderTests(TestCase):
                     self.assertEqual(conn._buffer.count[header.lower()], 1)
 
         srvr = server.CommandServer([RECEIVE, 'blahblahblah'])
-        testLoop.run_until_complete(_temp())
+        testLoop.run_until_complete(_run())
         srvr.stop()
 
     def test_content_length_0(self):
@@ -210,7 +210,7 @@ class HeaderTests(TestCase):
                     self.content_length = kv[1].strip()
                 list.append(self, item)
 
-        def _temp():
+        def _run():
             # POST with empty body
             conn = aioclient.HTTPConnection(*CONNECT)
             #conn.sock = FakeSocket(None)
@@ -226,7 +226,7 @@ class HeaderTests(TestCase):
             self.assertEqual(conn._buffer.content_length, b'0', 'Header Content-Length not set')
 
         srvr = server.CommandServer([RECEIVE, '', RECEIVE, ''])
-        testLoop.run_until_complete(_temp())
+        testLoop.run_until_complete(_run())
         srvr.stop()
 
     def test_putheader(self):
@@ -269,7 +269,7 @@ class BasicTest(TestCase):
         body = "HTTP/1.1 200 Ok\r\n\r\nText"
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket(body)
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
@@ -286,12 +286,12 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
         body1 = "HTTP/1.1 400.100 Not Ok\r\n\r\nText"
 
         @asyncio.coroutine
-        def _temp1(sock):
+        def _run1(sock):
             #sock = FakeSocket(body)
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
@@ -302,7 +302,7 @@ class BasicTest(TestCase):
             else:
                 self.assertTrue(False, 'BadStatusLine raised')
 
-        _run_with_server_pre(_temp1, body1)
+        _run_with_server_pre(_run1, body1)
 
 
     def test_bad_status_repr(self):
@@ -314,7 +314,7 @@ class BasicTest(TestCase):
         body = "HTTP/1.1 200 Ok\r\nContent-Length: 4\r\n\r\nText"
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             # if we have a length, the system knows when to close itself
             # same behaviour than when we read the whole thing with read()
             #sock = FakeSocket(body)
@@ -331,7 +331,7 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
 
     def test_partial_readintos(self):
@@ -340,7 +340,7 @@ class BasicTest(TestCase):
         body = "HTTP/1.1 200 Ok\r\nContent-Length: 4\r\n\r\nText"
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket(body)
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
@@ -358,7 +358,7 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     #@async_test
     def test_partial_reads_no_content_length(self):
@@ -367,7 +367,7 @@ class BasicTest(TestCase):
         #sock = FakeSocket(body)
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             # when no length is present, the socket should be gracefully closed when
             # all data was read
             resp = aioclient.HTTPResponse(sock)
@@ -385,7 +385,7 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_partial_readintos_no_content_length(self):
         # when no length is present, the socket should be gracefully closed when
@@ -394,7 +394,7 @@ class BasicTest(TestCase):
         #sock = FakeSocket(body)
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
             yield from resp.begin()
@@ -410,7 +410,7 @@ class BasicTest(TestCase):
             self.assertEqual(n, 0)
             self.assertTrue(resp.isclosed())
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_partial_reads_incomplete_body(self):
         # if the server shuts down the connection before the whole
@@ -418,7 +418,7 @@ class BasicTest(TestCase):
         body = "HTTP/1.1 200 Ok\r\nContent-Length: 10\r\n\r\nText"
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket(body)
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
@@ -432,7 +432,7 @@ class BasicTest(TestCase):
             self.assertEqual(rr3, b'')
             self.assertTrue(resp.isclosed())
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_partial_readintos_incomplete_body(self):
         # if the server shuts down the connection before the whole
@@ -440,7 +440,7 @@ class BasicTest(TestCase):
         body = "HTTP/1.1 200 Ok\r\nContent-Length: 10\r\n\r\nText"
         #sock = FakeSocket(body)
 
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
             yield from resp.begin()
@@ -459,7 +459,7 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_host_port(self):
         # Check invalid host_port
@@ -492,14 +492,14 @@ class BasicTest(TestCase):
                'Part_Number="Rocket_Launcher_0001"; Version="1"; Path="/acme"')
 
         #s = FakeSocket(text)
-        def _temp(sock):
+        def _run(sock):
             r = aioclient.HTTPResponse(sock)
             yield from r.init()
             yield from r.begin()
             cookies = r.getheader("Set-Cookie")
             self.assertEqual(cookies, hdr)
 
-        _run_with_server_pre(_temp, text)
+        _run_with_server_pre(_run, text)
 
     def test_read_head(self):
         # Test that the library doesn't attempt to read any data
@@ -509,7 +509,7 @@ class BasicTest(TestCase):
             'Content-Length: 14432\r\n'
             '\r\n')
 
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock, method="HEAD")
             yield from resp.init()
             yield from resp.begin()
@@ -517,7 +517,7 @@ class BasicTest(TestCase):
             if rr:
                 self.fail("Did not expect response from HEAD request")
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_readinto_head(self):
         # Test that the library doesn't attempt to read any data
@@ -527,7 +527,7 @@ class BasicTest(TestCase):
             'Content-Length: 14432\r\n'
             '\r\n')
 
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock, method="HEAD")
             yield from resp.init()
             yield from resp.begin()
@@ -537,7 +537,7 @@ class BasicTest(TestCase):
                 self.fail("Did not expect response from HEAD request")
             self.assertEqual(bytes(b), b'\x00'*5)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_too_many_headers(self):
         headers = '\r\n'.join('Header%d: foo' % i
@@ -545,7 +545,7 @@ class BasicTest(TestCase):
         text = ('HTTP/1.1 200 OK\r\n' + headers)
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             r = aioclient.HTTPResponse(sock)
             yield from r.init()
             try:
@@ -555,7 +555,7 @@ class BasicTest(TestCase):
             else:
                 self.assertFalse(True, r'')
 
-        _run_with_server_pre(_temp, text)
+        _run_with_server_pre(_run, text)
 
 
     def test_send_file(self):
@@ -565,7 +565,7 @@ class BasicTest(TestCase):
         with open(__file__, 'rb') as body:
             tmp = body.read()
         with open(__file__, 'rb') as body:
-            def _temp(host, port):
+            def _run(host, port):
                 conn = aioclient.HTTPConnection(host, port)
                 #sock = FakeSocket(body)
                 #sock = conn.sock
@@ -576,14 +576,14 @@ class BasicTest(TestCase):
 
             streamReader = asyncio.StreamReader()
             srvr, _ = _prep_server([len(tmp), expected], reader=streamReader)
-            _run_with_server(_temp, srvr=srvr)
+            _run_with_server(_run, srvr=srvr)
 
 
     def test_send(self):
         expected = b'this is a test this is only a test'
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
             conn = aioclient.HTTPConnection(host,port)
             #sock = FakeSocket(None)
             #conn.sock = sock
@@ -601,7 +601,7 @@ class BasicTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server([RECEIVE, '', RECEIVE, '', RECEIVE, ''], reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
     def test_send_updating_file(self):
         def data():
@@ -617,7 +617,7 @@ class BasicTest(TestCase):
 
         expected = b'data'
 
-        def _temp(host, port):
+        def _run(host, port):
             conn = aioclient.HTTPConnection(host, port)
             #sock = FakeSocket("")
             #conn.sock = sock
@@ -627,7 +627,7 @@ class BasicTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server([RECEIVE, '', RECEIVE, '', RECEIVE], reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
     def test_send_iter(self):
         expected = b'GET /foo HTTP/1.1\r\nHost: 127.0.0.1:2222\r\n' \
@@ -639,7 +639,7 @@ class BasicTest(TestCase):
             yield b"two"
             yield b"three"
 
-        def _temp(host, port):
+        def _run(host, port):
             conn = aioclient.HTTPConnection(host, port)
             #sock = FakeSocket("")
             #conn.sock = sock
@@ -651,13 +651,13 @@ class BasicTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server([len(expected)], reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
     #@async_test
     def test_send_type_error(self):
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
             # See: Issue #12676
             conn = aioclient.HTTPConnection(host, port)
             #conn.sock = FakeSocket('')
@@ -669,7 +669,7 @@ class BasicTest(TestCase):
             else:
                 self.assertFalse(True, 'type error')
 
-        _run_with_server(_temp, '')
+        _run_with_server(_run, '')
 
     def test_chunked(self):
 
@@ -677,7 +677,7 @@ class BasicTest(TestCase):
         #sock = FakeSocket(chunked_start + last_chunk + chunked_end)
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
 
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -686,10 +686,10 @@ class BasicTest(TestCase):
             self.assertEqual(r1, expected)
             resp.close()
 
-        _run_with_server_pre(_temp, chunked_start + last_chunk + chunked_end)
+        _run_with_server_pre(_run, chunked_start + last_chunk + chunked_end)
 
         @asyncio.coroutine
-        def _temp2(sock):
+        def _run2(sock):
 
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -707,13 +707,13 @@ class BasicTest(TestCase):
                 resp.close()
                 #sock.close()
 
-        _run_with_server_pre(_temp2, chunked_start + 'foo\r\n')
+        _run_with_server_pre(_run2, chunked_start + 'foo\r\n')
 
     def test_chunked1(self):
 
         expected = chunked_expected
 
-        def _tempO(n):
+        def _runO(n):
 
             @asyncio.coroutine
             def _tmpI(sock):
@@ -732,7 +732,7 @@ class BasicTest(TestCase):
 
         # Various read sizes
         for n in range(1, 12):
-            _run_with_server_pre(_tempO(n), chunked_start + last_chunk + chunked_end)
+            _run_with_server_pre(_runO(n), chunked_start + last_chunk + chunked_end)
 
     def test_readinto_chunked(self):
 
@@ -743,7 +743,7 @@ class BasicTest(TestCase):
         #sock = FakeSocket(chunked_start + last_chunk + chunked_end)
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
 
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -753,10 +753,10 @@ class BasicTest(TestCase):
             self.assertEqual(n, nexpected)
             resp.close()
 
-        _run_with_server_pre(_temp, chunked_start + last_chunk + chunked_end)
+        _run_with_server_pre(_run, chunked_start + last_chunk + chunked_end)
 
         @asyncio.coroutine
-        def _temp1(sock):
+        def _run1(sock):
             #sock = open_socket_conn(*CONNECT)
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -773,7 +773,7 @@ class BasicTest(TestCase):
             finally:
                 resp.close()
 
-        _run_with_server_pre(_temp1, chunked_start + 'foo\r\n')
+        _run_with_server_pre(_run1, chunked_start + 'foo\r\n')
 
     def test_readinto_chunked1(self):
 
@@ -781,10 +781,10 @@ class BasicTest(TestCase):
         nexpected = len(expected)
         b = bytearray(128)
 
-        def _tempO(n):
+        def _runO(n):
 
             @asyncio.coroutine
-            def _temp(sock):
+            def _run(sock):
                 #sock = FakeSocket(chunked_start + last_chunk + chunked_end)
                 resp = aioclient.HTTPResponse(sock, method="GET")
                 yield from resp.init()
@@ -797,11 +797,11 @@ class BasicTest(TestCase):
                 self.assertEqual(i, nexpected)
                 resp.close()
 
-            return _temp
+            return _run
 
         # Various read sizes
         for n in range(1, 12):
-            _run_with_server_pre(_tempO(n), chunked_start + last_chunk + chunked_end)
+            _run_with_server_pre(_runO(n), chunked_start + last_chunk + chunked_end)
 
 
     def test_chunked_head(self):
@@ -816,7 +816,7 @@ class BasicTest(TestCase):
         # sock = FakeSocket(chunked_start + last_chunk + chunked_end)
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock, method="HEAD")
             yield from resp.init()
             yield from resp.begin()
@@ -829,7 +829,7 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, chunked_start + last_chunk + chunked_end)
+        _run_with_server_pre(_run, chunked_start + last_chunk + chunked_end)
 
     def test_readinto_chunked_head(self):
 
@@ -844,7 +844,7 @@ class BasicTest(TestCase):
 
         #sock = FakeSocket(chunked_start + last_chunk + chunked_end)
 
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock, method="HEAD")
             yield from resp.init()
             yield from resp.begin()
@@ -859,14 +859,14 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, chunked_start_+last_chunk+chunked_end)
+        _run_with_server_pre(_run, chunked_start_+last_chunk+chunked_end)
 
     def test_negative_content_length(self):
         #sock = FakeSocket(
         body = 'HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\nHello\r\n'
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
             yield from resp.begin()
@@ -874,12 +874,12 @@ class BasicTest(TestCase):
             self.assertEqual(rr1, b'Hello\r\n')
             self.assertTrue(resp.isclosed())
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_incomplete_read(self):
         body = 'HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nHello\r\n'
 
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
             yield from resp.begin()
@@ -895,7 +895,7 @@ class BasicTest(TestCase):
             else:
                 self.fail('IncompleteRead expected')
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def tst_epipe(self):
 
@@ -905,7 +905,7 @@ class BasicTest(TestCase):
             "WWW-Authenticate: Basic realm=\"example\"\r\n")
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
             conn = aioclient.HTTPConnection(host, port)
             #conn.sock = sock
 
@@ -916,7 +916,7 @@ class BasicTest(TestCase):
             else:
                 self.assertTrue(False, 'OSError')
 
-        _run_with_server(_temp, [(BREAK, b'Content-'), RECEIVE, expected])
+        _run_with_server(_run, [(BREAK, b'Content-'), RECEIVE, expected])
 
     def test_wwwauth(self):
 
@@ -925,7 +925,7 @@ class BasicTest(TestCase):
             "Content-type: text/html\r\n"
             "WWW-Authenticate: Basic realm=\"example\"\r\n")
 
-        def _temp1(host, port):
+        def _run1(host, port):
             """What is this test doing in an ePipe test? """
 
             conn = aioclient.HTTPConnection(host, port)
@@ -936,7 +936,7 @@ class BasicTest(TestCase):
             self.assertEqual("Basic realm=\"example\"",
                              resp.getheader("www-authenticate"))
 
-        _run_with_server(_temp1, expected)
+        _run_with_server(_run1, expected)
 
 
     # Test lines overflowing the max line size (_MAXLINE in http.aioclient)
@@ -944,7 +944,7 @@ class BasicTest(TestCase):
 
         body = "HTTP/1.1 200 Ok" + "k" * 65536 + "\r\n"
 
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
             try:
@@ -954,7 +954,7 @@ class BasicTest(TestCase):
             else:
                 self.assertTrue(False, 'overflow caught')
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def test_overflowing_header_line(self):
         body = (
@@ -962,7 +962,7 @@ class BasicTest(TestCase):
             'X-Foo: bar' + 'r' * 65536 + '\r\n\r\n'
         )
 
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
             try:
@@ -972,7 +972,7 @@ class BasicTest(TestCase):
             else:
                 self.assertFalse(False, 'Raised LineTooLong')
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
 
     def test_overflowing_chunked_line(self):
@@ -986,7 +986,7 @@ class BasicTest(TestCase):
         )
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
             yield from resp.begin()
@@ -995,7 +995,7 @@ class BasicTest(TestCase):
             except aioclient.LineTooLong as e:
                 self.assertTrue(True, resp.read)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
 
     def test_early_eof(self):
@@ -1003,7 +1003,7 @@ class BasicTest(TestCase):
 
         body = "HTTP/1.1 200 Ok"
 
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket(body)
             resp = aioclient.HTTPResponse(sock)
             yield from resp.init()
@@ -1015,7 +1015,7 @@ class BasicTest(TestCase):
             resp.close()
             self.assertTrue(resp.closed)
 
-        _run_with_server_pre(_temp, body)
+        _run_with_server_pre(_run, body)
 
     def tst_delayed_ack_opt(self):
         # Test that Nagle/delayed_ack optimistaion works correctly.
@@ -1023,7 +1023,7 @@ class BasicTest(TestCase):
         # For small payloads, it should coalesce the body with
         # headers, resulting in a single sendall() call
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
 
             conn = aioclient.HTTPConnection(host, port)
             #sock = FakeSocket(None)
@@ -1034,9 +1034,9 @@ class BasicTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
-        def _temp1(host, port):
+        def _run1(host, port):
             # For large payloads, it should send the headers and
             # then the body, resulting in more than one sendall()
             # call
@@ -1051,13 +1051,13 @@ class BasicTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_temp1, srvr=srvr)
+        _run_with_server(_run1, srvr=srvr)
 
     def test_chunked_extension(self):
         extra = '3;foo=bar\r\n' + 'abc\r\n'
         expected = chunked_expected + b'abc'
 
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket(chunked_start + extra + last_chunk_extended + chunked_end)
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -1067,14 +1067,14 @@ class BasicTest(TestCase):
             self.assertEqual(d, expected)
             resp.close()
 
-        _run_with_server_pre(_temp, chunked_start + extra + last_chunk_extended + chunked_end)
+        _run_with_server_pre(_run, chunked_start + extra + last_chunk_extended + chunked_end)
 
     def test_chunked_missing_end(self):
         """some servers may serve up a short chunked encoding stream"""
         expected = chunked_expected
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             # sock = FakeSocket(chunked_start + last_chunk)  #no terminating crlf
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -1084,14 +1084,14 @@ class BasicTest(TestCase):
             self.assertEqual(d, expected)
             resp.close()
 
-        _run_with_server_pre(_temp, chunked_start + last_chunk)
+        _run_with_server_pre(_run, chunked_start + last_chunk)
 
     def test_chunked_trailers(self):
         """See that trailers are read and ignored"""
         expected = chunked_expected
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket(chunked_start + last_chunk + trailers + chunked_end)
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -1104,7 +1104,7 @@ class BasicTest(TestCase):
             self.assertEqual(d1, b"") #we read to the end
             resp.close()
 
-        _run_with_server_pre(_temp, chunked_start + last_chunk + trailers + chunked_end)
+        _run_with_server_pre(_run, chunked_start + last_chunk + trailers + chunked_end)
 
     def test_chunked_sync(self):
         """Check that we don't read past the end of the chunked-encoding stream"""
@@ -1112,7 +1112,7 @@ class BasicTest(TestCase):
         extradata = "extradata"
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket(chunked_start + last_chunk + trailers + chunked_end + extradata)
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -1127,7 +1127,7 @@ class BasicTest(TestCase):
             #self.assertEqual(sock.file.read(100),
             resp.close()
 
-        _run_with_server_pre(_temp, chunked_start + last_chunk + trailers + chunked_end + extradata)
+        _run_with_server_pre(_run, chunked_start + last_chunk + trailers + chunked_end + extradata)
 
     def test_content_length_sync(self):
         """Check that we don't read past the end of the Content-Length stream"""
@@ -1135,7 +1135,7 @@ class BasicTest(TestCase):
         expected = b"Hello123\r\n"
 
         @asyncio.coroutine
-        def _temp(sock):
+        def _run(sock):
             #sock = FakeSocket('HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nHello123\r\n' + extradata)
             resp = aioclient.HTTPResponse(sock, method="GET")
             yield from resp.init()
@@ -1149,7 +1149,7 @@ class BasicTest(TestCase):
             self.assertEqual(d1, b'') #we read to the end
             resp.close()
 
-        _run_with_server_pre(_temp, 'HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nHello123\r\n' + extradata)
+        _run_with_server_pre(_run, 'HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nHello123\r\n' + extradata)
 
 # class ExtendedReadTest(TestCase):
 #     """
@@ -1384,7 +1384,7 @@ class TimeoutTest(TestCase):
         # This will prove that the timeout gets through HTTPConnection
         # and into the socket.
 
-        def _temp(host, port):
+        def _run(host, port):
             # default -- use global socket timeout
             self.assertIsNone(socket.getdefaulttimeout())
             socket.setdefaulttimeout(30)
@@ -1413,7 +1413,7 @@ class TimeoutTest(TestCase):
             self.assertEqual(httpConn.sock.gettimeout(), 30)
             httpConn.close()
 
-        _run_with_server(_temp, '')
+        _run_with_server(_run, '')
 
 
 class HTTPSTest(TestCase):
@@ -1477,7 +1477,7 @@ class HTTPSTest(TestCase):
         # The (valid) cert validates the HTTP hostname
         import ssl
 
-        def _temp():
+        def _run():
             server = self.make_server(CERT_localhost)
             context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
             context.verify_mode = ssl.CERT_REQUIRED
@@ -1488,7 +1488,7 @@ class HTTPSTest(TestCase):
             self.assertEqual(resp.status, 404)
             del server
 
-        coro = asyncio.coroutine(_temp)
+        coro = asyncio.coroutine(_run)
         future = coro()
         testLoop.run_until_complete(future)
 
@@ -1557,7 +1557,7 @@ class RequestBodyTest(TestCase):
     def test_manual_content_length(self):
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
             self.conn = aioclient.HTTPConnection(host, port)
             # Set an incorrect content-length so that we can verify that
             # it will not be over-ridden by the library.
@@ -1569,13 +1569,13 @@ class RequestBodyTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
 
     def test_ascii_body(self):
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
 
             self.conn = aioclient.HTTPConnection(host, port)
             yield from self.conn.request("PUT", "/url", "body")
@@ -1588,12 +1588,12 @@ class RequestBodyTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
     def test_latin1_body(self):
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
 
             self.conn = aioclient.HTTPConnection(host, port)
             yield from self.conn.request("PUT", "/url", "body\xc1")
@@ -1606,12 +1606,12 @@ class RequestBodyTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
     def test_bytes_body(self):
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
 
             self.conn = aioclient.HTTPConnection(host, port)
             yield from self.conn.request("PUT", "/url", b"body\xc1")
@@ -1624,12 +1624,12 @@ class RequestBodyTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
     def test_file_body(self):
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
 
             self.conn = aioclient.HTTPConnection(host, port)
             self.addCleanup(support.unlink, support.TESTFN)
@@ -1646,12 +1646,12 @@ class RequestBodyTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server([93,''], prime=False, reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
     def test_binary_file_body(self):
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
 
             self.conn = aioclient.HTTPConnection(host, port)
             self.addCleanup(support.unlink, support.TESTFN)
@@ -1668,7 +1668,7 @@ class RequestBodyTest(TestCase):
 
         streamReader = asyncio.StreamReader()
         srvr, _ = _prep_server([94, ''], prime=False, reader=streamReader)
-        _run_with_server(_temp, srvr=srvr)
+        _run_with_server(_run, srvr=srvr)
 
 
 class HTTPResponseTest(TestCase):
@@ -1685,7 +1685,7 @@ class HTTPResponseTest(TestCase):
 
     def test_getting_header(self):
 
-        def _temp(sock):
+        def _run(sock):
             yield from self._setUp(sock)
             header = self.resp.getheader('My-Header')
             self.assertEqual(header, 'first-value, second-value')
@@ -1693,20 +1693,20 @@ class HTTPResponseTest(TestCase):
             header = self.resp.getheader('My-Header', 'some default')
             self.assertEqual(header, 'first-value, second-value')
 
-        _run_with_server_pre(_temp, self.body)
+        _run_with_server_pre(_run, self.body)
 
     def test_getting_nonexistent_header_with_string_default(self):
 
-        def _temp(sock):
+        def _run(sock):
             yield from self._setUp(sock)
             header = self.resp.getheader('No-Such-Header', 'default-value')
             self.assertEqual(header, 'default-value')
 
-        _run_with_server_pre(_temp, self.body)
+        _run_with_server_pre(_run, self.body)
 
     def test_getting_nonexistent_header_with_iterable_default(self):
 
-        def _temp(sock):
+        def _run(sock):
             yield from self._setUp(sock)
             header = self.resp.getheader('No-Such-Header', ['default', 'values'])
             self.assertEqual(header, 'default, values')
@@ -1714,25 +1714,25 @@ class HTTPResponseTest(TestCase):
             header = self.resp.getheader('No-Such-Header', ('default', 'values'))
             self.assertEqual(header, 'default, values')
 
-        _run_with_server_pre(_temp, self.body)
+        _run_with_server_pre(_run, self.body)
 
     def test_getting_nonexistent_header_without_default(self):
 
-        def _temp(sock):
+        def _run(sock):
             yield from self._setUp(sock)
             header = self.resp.getheader('No-Such-Header')
             self.assertEqual(header, None)
 
-        _run_with_server_pre(_temp, self.body)
+        _run_with_server_pre(_run, self.body)
 
     def test_getting_header_defaultint(self):
 
-        def _temp(sock):
+        def _run(sock):
             yield from self._setUp(sock)
             header = self.resp.getheader('No-Such-Header',default=42)
             self.assertEqual(header, 42)
 
-        _run_with_server_pre(_temp, self.body)
+        _run_with_server_pre(_run, self.body)
 
 class TunnelTests(TestCase):
 
@@ -1747,7 +1747,7 @@ class TunnelTests(TestCase):
         #    return FakeSocket(response_text, host=address[0], port=address[1])
 
         @asyncio.coroutine
-        def _temp(host, port):
+        def _run(host, port):
 
             conn = aioclient.HTTPConnection(host, port)
             #conn._create_connection = create_connection
@@ -1776,7 +1776,7 @@ class TunnelTests(TestCase):
             self.assertTrue(b'CONNECT destination.com' in conn.sock.data)
             self.assertTrue(b'Host: destination.com' in conn.sock.data)
 
-        _run_with_server(_temp, [response_text[0], RECEIVE, response_text[1], RECEIVE, response_text[2]])
+        _run_with_server(_run, [response_text[0], RECEIVE, response_text[1], RECEIVE, response_text[2]])
 
 
 def main(verbose=None):

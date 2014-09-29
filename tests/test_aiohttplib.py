@@ -18,12 +18,13 @@ import unittest
 import testtcpserver as server
 from testtcpserver import RECEIVE, BREAK
 
-
 os.environ['PYTHONASYNCIODEBUG'] = '1'
 
 TestCase = unittest.TestCase
 
 from test import support
+support.use_resources = ['network']
+
 
 here = os.path.dirname(__file__)
 # Self-signed cert file for 'localhost'

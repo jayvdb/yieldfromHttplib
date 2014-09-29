@@ -215,17 +215,17 @@ class HeaderTests(TestCase):
             conn = aioclient.HTTPConnection(*CONNECT)
             #conn.sock = FakeSocket(None)
             conn._buffer = ContentLengthChecker()
-            yield from conn.request('POST', '/', '')
+            yield from asyncio.wait_for(conn.request('POST', '/', ''), 5.0)
             self.assertEqual(conn._buffer.content_length, b'0', 'Header Content-Length not set ')
 
             # PUT request with empty body
             conn = aioclient.HTTPConnection(*CONNECT)
             #conn.sock = FakeSocket(None)
             conn._buffer = ContentLengthChecker()
-            yield from conn.request('PUT', '/', '')
+            yield from asyncio.wait_for(conn.request('PUT', '/', ''), 5.0)
             self.assertEqual(conn._buffer.content_length, b'0', 'Header Content-Length not set')
 
-        srvr = server.CommandServer([RECEIVE, ''])
+        srvr = server.CommandServer([RECEIVE, '', RECEIVE, ''])
         testLoop.run_until_complete(_temp())
         srvr.stop()
 

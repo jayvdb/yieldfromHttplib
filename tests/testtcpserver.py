@@ -23,7 +23,7 @@ class TestTCPServer:
     :py:func:`socket.recv` calls to communicate with the client process.
     '''
 
-    GROUP = 'fakeTestTCPServer'
+    GROUP = 'TestTCPServer'
 
     STOPPED = False
 
@@ -54,7 +54,7 @@ class TestTCPServer:
             self.port = self.s.getsockname()[1]
 
             count = 0
-            evt.set()
+            evt.set()  # signals that server is started, main thread can continue
             while not self.STOPPED:
                 self._perConn(count)
             self.s.close()
@@ -64,22 +64,80 @@ class TestTCPServer:
         evt = threading.Event()
         thd = threading.Thread(name=self.GROUP, target=lambda: _setup(self, evt))
         thd.start()
-        evt.wait()
+        evt.wait() # wait for server to startup, before continuing
         time.sleep(0.1)
 
     def server(self, sock, conn, ct):
         raise NotImplementedError('implement .server method')
 
     def stop(self):
-        self.STOPPED = True
+        TestTCPServer.STOPPED = True
         self.s.close()
 
 
 
-RECEIVE = None          # instruct the server to read data
+RECEIVE = 0         # instruct the server to read data
+BREAK = None
 
 
-class CommandServer(TestTCPServer):
+class GenericServer(TestTCPServer):
+
+    def __init__(self, commands, host='127.0.0.1', port=2222):
+        self.commands = commands
+        TestTCPServer.__init__(self, host, port)
+
+    def _recieveData(self, conn, minQuan=1):
+        inp = b''
+        d = True
+        while d and len(inp) < minQuan:
+            d = conn.recv(1024)
+            inp = inp + d
+        if not inp:
+            return None
+        return inp
+
+    def _sendData(self, conn, data):
+        if type(data) == type(b''):
+            conn.send(data)
+        else:
+            if PY3:
+                conn.send(bytes(data, 'ascii'))
+            else:
+                conn.send(bytes(data))
+
+    def server(self, sock, conn, count):
+        filters = {}
+        conn.settimeout(2.0)
+        for command in self.commands:
+            if self.STOPPED:
+                break
+            if type(command) == int:  # receive data
+                try:
+                    command = command if command else 1
+                    d = self._recieveData(conn, abs(command))
+                    for nm, func in filters:
+                        if nm in d and func is not None:
+                            func()
+                    self.withReceivedData(d)
+                except socket.timeout:
+                    self.STOPPED = True
+                    break
+            elif type(command) == tuple:
+                filters[command[1]] = lambda: conn.close()
+            else:
+                self._sendData(conn, command)
+
+        self.atEOF(conn)
+        conn.close()
+
+    def withReceivedData(self, data):
+        pass
+
+    def atEOF(self, conn):
+        pass
+
+
+class CommandServer(GenericServer):
     '''A convenience class that allows you to specify a set of TCP
     interactions that will be performed, providing a generic "server()"
     method for FakeTCPServer().
@@ -93,43 +151,82 @@ class CommandServer(TestTCPServer):
     >>> sc = memcached2.ServerConnection('memcached://127.0.0.1:{0}/'
     >>>         .format(fake_server.port))
     '''
+    
+    def __init__(self, commands, host='127.0.0.1', port=2222, verbose=True):
+        GenericServer.__init__(self, commands, host, port)
+        self.numBytesSent = 0
+        self.received = []
+        self.verbose = verbose
+        if self.verbose:
+            print('SERVER: initialized')
 
-    def __init__(self, commands, host='127.0.0.1', port=2222):
-        self.commands = commands
-        TestTCPServer.__init__(self, host, port)
-
-    def server(self, sock, conn, count):
-        quant = 0
-        for command in self.commands:
-            if command == RECEIVE:
-                conn.recv(1000)
-            else:
-                if type(command) == type(b''):
-                    conn.send(command)
-                    quant += len(command)
+    def _recieveData(self, conn, minQuan=1):
+        try:
+            inp = GenericServer._recieveData(self, conn, minQuan)
+        except socket.timeout:
+            if self.verbose:
+                print('SERVER: timedout')
+            raise
+        else:
+            if self.verbose:
+                if inp is None:
+                    print('SERVER: socket recv null')
                 else:
-                    if PY3:
-                        conn.send(bytes(command, 'ascii'))
-                        quant += len(command)
-                    else:
-                        conn.send(bytes(command))
-                        quant += len(command)
-        print('closing socket connection %s after %s bytes' % (conn.getpeername()[1], quant))
-        conn.close()
+                    print('SERVER: received some %s bytes' % len(inp or ''))
+
+        self.received.append(inp)
+        return inp
+
+    def _sendData(self, conn, data):
+        GenericServer._sendData(self, conn, data)
+        self.numBytesSent += len(data)
+        if self.verbose:
+            print('SERVER: sent %s bytes' % len(data))
+
+    def atEOF(self, conn):
+        GenericServer.atEOF(self, conn)
+        if self.verbose:
+            print('SERVER: closing socket connection %s after %s bytes' % (conn.getpeername()[1], self.numBytesSent))
 
 
+class AsyncioCommandServer(CommandServer):
+    """same as CommandServer, but feeds data into a StreamReader"""
+
+    def __init__(self, commands, loop=None, reader=None, host='127.0.0.1', port=2222, verbose=True):
+        CommandServer.__init__(self, commands, host, port, verbose)
+        self.reader = reader
+        self.loop = loop
+
+    def withReceivedData(self, data):
+        def _d(data):
+            if self.verbose:
+                print('SERVER: feed_data %s bytes' % len(data))
+            self.reader.feed_data(data)
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(_d, data)
+
+    def atEOF(self, conn):
+        def _d():
+            if self.verbose:
+                print('SERVER: atEOF')
+            self.reader.feed_eof()
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(_d)
 
 class OneShotServer(CommandServer):
 
-    def __init__(self, commands, host='127.0.0.1', port=2222):
-        self.commands = commands #[RECEIVE, command]
-        TestTCPServer.__init__(self, host, port)
+    def __init__(self, commands, host='127.0.0.1', port=2222, verbose=True):
+        CommandServer.__init__(self, commands, host, port, verbose)
 
     def _perConn(self, count):
-        try:
-            connection, addr = self.s.accept()
-        except socket.timeout as e:
-            return
+        if not self.STOPPED:
+            try:
+                connection, addr = self.s.accept()
+            except OSError as e:
+                return
+            except socket.timeout as e:
+                return
+        count = 0
         if not self.STOPPED:
             self.server(self.s, connection, count)
             count += 1

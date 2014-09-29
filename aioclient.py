@@ -248,7 +248,7 @@ class HTTPMessage(email.message.Message):
         return lst
 
 @asyncio.coroutine
-def parse_headers(fp, _class=HTTPMessage):
+def parse_headers(fp, _class=HTTPMessage, timeout=5.0):
     """Parses only RFC2822 headers from a file pointer.
 
     email Parser wants to see strings rather than bytes.
@@ -260,14 +260,20 @@ def parse_headers(fp, _class=HTTPMessage):
     """
     headers = []
     while True:
-        line = yield from fp.readline() #_MAXLINE + 1)
-        if len(line) > _MAXLINE:
-            raise LineTooLong("header line")
-        headers.append(line)
-        if len(headers) > _MAXHEADERS:
-            raise HTTPException("got more than %d headers" % _MAXHEADERS)
-        if line in (b'\r\n', b'\n', b''):
-            break
+        try:
+            line = yield from asyncio.wait_for(fp.readline(), timeout) # todo trap ValueError
+            if len(line) > _MAXLINE:
+                raise LineTooLong("header line")
+            headers.append(line)
+            if len(headers) > _MAXHEADERS:
+                raise HTTPException("got more than %d headers" % _MAXHEADERS)
+            if line in (b'\r\n', b'\n', b''):
+                break
+        except ValueError as e:
+            if 'too long' in e.args[0]:
+                raise LineTooLong('header line')
+            else:
+                raise
     hstring = b''.join(headers).decode('iso-8859-1')
     return email.parser.Parser(_class=_class).parsestr(hstring)
 
@@ -294,6 +300,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         #self.fp, jnk = yield from asyncio.open_connection(sock=sock)
         #self.fp = sock.makefile("rb")
         self.debuglevel = debuglevel
+        self.TIMEOUT = 5.0
         self._method = method
 
         # The HTTPResponse object is returned via urllib.  The clients
@@ -318,13 +325,19 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     def init(self):
         assert self.fp is None
         reader, writer = yield from asyncio.open_connection(sock=self.sock)
-        writer.write_eof()
+        #writer.write_eof() # breaks SSL to close either channel
         self.fp = reader
         self.sock = None
 
     @asyncio.coroutine
     def _read_status(self):
-        line = yield from self.fp.readline() #_MAXLINE + 1)
+        try:
+            line = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
+        except ValueError as e:
+            if 'is too long' in e.args[0]:
+                raise LineTooLong('status line')
+            else:
+                raise
         line = str(line, "iso-8859-1")
         if len(line) > _MAXLINE:
             raise LineTooLong("status line")
@@ -369,7 +382,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
                 break
             # skip the header from the 100 response
             while True:
-                skip = yield from self.fp.readline() #_MAXLINE + 1)
+                skip = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT) # todo trap ValueError
                 if len(skip) > _MAXLINE:
                     raise LineTooLong("header line")
                 skip = skip.strip()
@@ -525,7 +538,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
                 return (yield from self._readall_chunked())
 
             if self.length is None:
-                s = yield from self.fp.read()
+                s = yield from asyncio.wait_for(self.fp.read(), self.TIMEOUT)
             else:
                 try:
                     s = yield from self._safe_read(self.length)
@@ -574,7 +587,13 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     @asyncio.coroutine
     def _read_next_chunk_size(self):
         # Read the next chunk size from the file
-        line = yield from self.fp.readline() #_MAXLINE + 1)
+        try:
+            line = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
+        except ValueError as e:
+            if 'ine is too long' in e.args[0]:
+                raise LineTooLong('chunk size')
+            else:
+                raise
         if len(line) > _MAXLINE:
             raise LineTooLong("chunk size")
         i = line.find(b";")
@@ -593,7 +612,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         # read and discard trailer up to the CRLF terminator
         ### note: we shouldn't have any trailers!
         while True:
-            line = yield from self.fp.readline() #_MAXLINE + 1)
+            line = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
             if len(line) > _MAXLINE:
                 raise LineTooLong("trailer line")
             if not line:
@@ -846,7 +865,9 @@ class HTTPConnection:
     loop = asyncio.get_event_loop()
 
     def __init__(self, host, port=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
-        self.timeout = timeout
+        if type(timeout) == type(object()):
+            timeout = 30.0
+        self.TIMEOUT = timeout
         self.source_address = source_address
         self.sock = None
         self._buffer = []
@@ -932,7 +953,7 @@ class HTTPConnection:
             self.close()
             raise OSError("Tunnel connection failed: %d %s" % (code, message.strip()))
         while True:
-            line = yield from response.fp.readline() #_MAXLINE + 1)
+            line = yield from asyncio.wait_for(response.fp.readline(), self.TIMEOUT) # todo - trap ValueError
             if len(line) > _MAXLINE:
                 raise LineTooLong("header line")
             if not line:
@@ -944,8 +965,7 @@ class HTTPConnection:
     @asyncio.coroutine
     def connect(self):
         """Connect to the host and port specified in __init__."""
-        self.sock = self._create_connection((self.host,self.port),
-                                            self.timeout, self.source_address)
+        self.sock = self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
 
         if self._tunnel_host:
             yield from self._tunnel()
@@ -1310,52 +1330,52 @@ else:
 
         default_port = HTTPS_PORT
 
-        # XXX Should key_file and cert_file be deprecated in favour of context?
-    #
-    #     def __init__(self, host, key_file=None, port=None, cert_file=None,
-    #                  timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
-    #                  source_address=None, *, context=None,
-    #                  check_hostname=None):
-    #         super(HTTPSConnection, self).__init__(host, port, timeout,
-    #         super(HTTPSConnection, self).__init__(host, port, timeout,
-    #                                               source_address)
-    #         self.key_file = key_file
-    #         self.cert_file = cert_file
-    #         if context is None:
-    #             context = ssl._create_stdlib_context()
-    #         will_verify = context.verify_mode != ssl.CERT_NONE
-    #         if check_hostname is None:
-    #             check_hostname = will_verify
-    #         elif check_hostname and not will_verify:
-    #             raise ValueError("check_hostname needs a SSL context with "
-    #                              "either CERT_OPTIONAL or CERT_REQUIRED")
-    #         if key_file or cert_file:
-    #             context.load_cert_chain(cert_file, key_file)
-    #         self._context = context
-    #         self._check_hostname = check_hostname
-    #
-    #     def connect(self):
-    #         "Connect to a host on a given (SSL) port."
-    #
-    #         super().connect()
-    #
-    #         if self._tunnel_host:
-    #             server_hostname = self._tunnel_host
-    #         else:
-    #             server_hostname = self.host
-    #         sni_hostname = server_hostname if ssl.HAS_SNI else None
-    #
-    #         self.sock = self._context.wrap_socket(self.sock,
-    #                                               server_hostname=sni_hostname)
-    #         if not self._context.check_hostname and self._check_hostname:
-    #             try:
-    #                 ssl.match_hostname(self.sock.getpeercert(), server_hostname)
-    #             except Exception:
-    #                 self.sock.shutdown(socket.SHUT_RDWR)
-    #                 self.sock.close()
-    #                 raise
-    #
-    # __all__.append("HTTPSConnection")
+        # XXX Should key_ file and cert_ file be deprecated in favour of context?
+
+        def __init__(self, host, port=None, key_file=None, cert_file=None,
+                     timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+                     source_address=None, *, context=None,
+                     check_hostname=None):
+            super(HTTPSConnection, self).__init__(host, port, timeout, source_address)
+            self.key_file = key_file
+            self.cert_file = cert_file
+            if context is None:
+                context = ssl._create_stdlib_context()
+            will_verify = context.verify_mode != ssl.CERT_NONE
+            if check_hostname is None:
+                check_hostname = will_verify
+            elif check_hostname and not will_verify:
+                raise ValueError("check_hostname needs a SSL context with "
+                                 "either CERT_OPTIONAL or CERT_REQUIRED")
+            if key_file or cert_file:
+                context.load_cert_chain(cert_file, key_file)
+            self._context = context
+            self._check_hostname = check_hostname
+
+        @asyncio.coroutine
+        def connect(self):
+            "Connect to a host on a given (SSL) port."
+
+            #super().connect()
+            yield from super(HTTPSConnection, self).connect()
+
+            if self._tunnel_host:
+                server_hostname = self._tunnel_host
+            else:
+                server_hostname = self.host
+            sni_hostname = server_hostname if ssl.HAS_SNI else None
+
+            self.sock = self._context.wrap_socket(self.sock, server_hostname=sni_hostname,
+                                                  do_handshake_on_connect=True)
+            if not self._context.check_hostname and self._check_hostname:
+                try:
+                    ssl.match_hostname(self.sock.getpeercert(), server_hostname)
+                except Exception:
+                    self.sock.shutdown(socket.SHUT_RDWR)
+                    self.sock.close()
+                    raise
+
+    __all__.append("HTTPSConnection")
 
 class HTTPException(Exception):
     # Subclasses that define an __init__ must call Exception.__init__

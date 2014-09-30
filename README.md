@@ -46,5 +46,5 @@ Establishing the connection to the socket involves some Input/Output latency, so
     d = yield from resp.readinto(b)
 
 
-The fileno() method is a noop.  The .fp attribute is an asyncio.StreamReader, with .read(), .readlines(), and .readexactly() methods, all coroutines.  The other attributes work as per the regular HttpLib module.
+The fileno() method is a noop.  The .fp attribute is an asyncio.StreamReader, with .read(), .readlines(), and .readexactly() methods, all coroutines.  The other attributes and methods work as per the regular HttpLib module.
 

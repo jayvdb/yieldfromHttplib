@@ -14,12 +14,13 @@ class http.client.HTTPConnection(host, port=None, [timeout, ]source_address=None
     resp = yield from conn.getresponse()
     #
     yield from conn.connect()
-    yield from conn.putrequest(..)
+    conn.putrequest(..)
     conn.putheader('X-Whatever', 'yesno')
     yield from conn.endheaders('message body')
     yield from conn.send('more body')
     #
     resp = yield from conn.getresponse()
+    # returns an HTTPResponse object
     
     
 
@@ -38,4 +39,12 @@ Generally, you wont need to call the constructor directly, but if you do, you ne
     yield from resp.init()
     
 Establishing the connection to the socket involves some Input/Output latency, so the yield from is required, and having the constructor itself be a coroutine would be sketchy.
+
+    d = yield from resp.read()
+    # or
+    b = bytearray(10)
+    d = yield from resp.readinto(b)
+
+
+The fileno() method is a noop.  The .fp attribute is an asyncio.StreamReader, with .read(), .readlines(), and .readexactly() methods, all coroutines.  The other attributes work as per the regular HttpLib module.
 

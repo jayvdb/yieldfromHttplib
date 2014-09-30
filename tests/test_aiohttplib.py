@@ -72,6 +72,44 @@ def async_test(f):
 async_test.__test__ = False # not a test
 
 
+class FauxSocket(socket.socket):
+    """subclass of a true socket"""
+
+    def __init__(self, family=socket.AF_INET, type=socket.SOCK_STREAM, sock=None, *args, **kwargs):
+        self._data = {'sendall_calls': 0,
+                      'send_calls': 0,
+                      'data_out': b'',
+                      'cue': None,
+                      'throw': None}
+        if sock is not None:
+            super(FauxSocket, self).__init__(family=sock.family, type=sock.type, proto=sock.proto, fileno=sock.fileno())
+            self.settimeout(sock.gettimeout())
+            sock.detach()
+        else:
+            super(FauxSocket, self).__init__(family, type, *args, **kwargs)
+
+    def sendall(self, data):
+        self._data['sendall_calls'] += 1
+        self._data['data_out'] += data
+        self.testBreak()
+        return socket.socket.sendall(self, data)
+
+    def send(self, data):
+        self._data['send_calls'] += 1
+        self._data['data_out'] += data
+        self.testBreak()
+        return socket.socket.send(self, data)
+
+    def testBreak(self):
+        cue = self._data['cue']
+        if cue is not None and cue in self._data['data_out']:
+            raise self._data['throw']
+
+    def breakOn(self, cue, exc):
+        """registers cue, and when cue is seen in send data, exception is thrown"""
+        self._data['cue'] = cue
+        self._data['throw'] = exc
+
 class FakeSocket:
     def __init__(self, text, fileclass=io.BytesIO, host=None, port=None):
         if isinstance(text, str):
@@ -237,24 +275,34 @@ class HeaderTests(TestCase):
         self.assertIn(b'Content-length: 42', conn._buffer)
 
     #@async_test
-    def tst_ipv6host_header(self):
+    def test_ipv6host_header(self):
         # Default host header on IPv6 transaction should wrapped by [] if
         # its actual IPv6 address
         expected = b'GET /foo HTTP/1.1\r\nHost: [2001::]:81\r\n' \
                    b'Accept-Encoding: identity\r\n\r\n'
-        conn = aioclient.HTTPConnection('[2001::]:81')
-        sock = FakeSocket('')
-        conn.sock = sock
-        yield from conn.request('GET', '/foo')
-        self.assertTrue(sock.data.startswith(expected))
 
-        expected = b'GET /foo HTTP/1.1\r\nHost: [2001:102A::]\r\n' \
+        @asyncio.coroutine
+        def _run(sock):
+            conn = aioclient.HTTPConnection('[2001::]:81')
+            sock = FauxSocket(sock=sock)
+            conn.sock = sock
+            yield from conn.request('GET', '/foo')
+            self.assertTrue(sock._data['data_out'].startswith(expected))
+
+        _run_with_server_pre(_run, [len(expected),''])
+
+        expected1 = b'GET /foo HTTP/1.1\r\nHost: [2001:102A::]\r\n' \
                    b'Accept-Encoding: identity\r\n\r\n'
-        conn = aioclient.HTTPConnection('[2001:102A::]')
-        sock = FakeSocket('')
-        conn.sock = sock
-        yield from conn.request('GET', '/foo')
-        self.assertTrue(sock.data.startswith(expected))
+
+        @asyncio.coroutine
+        def _run1(sock):
+            conn = aioclient.HTTPConnection('[2001:102A::]')
+            sock = FauxSocket(sock=sock)
+            conn.sock = sock
+            yield from conn.request('GET', '/foo')
+            self.assertTrue(sock._data['data_out'].startswith(expected1))
+
+        _run_with_server_pre(_run1, [len(expected), ''])
 
 
 class BasicTest(TestCase):
@@ -897,7 +945,7 @@ class BasicTest(TestCase):
 
         _run_with_server_pre(_run, body)
 
-    def tst_epipe(self):
+    def test_epipe(self):
 
         expected = (
             "HTTP/1.0 401 Authorization Required\r\n"
@@ -905,9 +953,11 @@ class BasicTest(TestCase):
             "WWW-Authenticate: Basic realm=\"example\"\r\n")
 
         @asyncio.coroutine
-        def _run(host, port):
-            conn = aioclient.HTTPConnection(host, port)
-            #conn.sock = sock
+        def _run(sock):
+            conn = aioclient.HTTPConnection("example.com")
+            sock = FauxSocket(sock=sock)
+            sock.breakOn(b'Content', OSError(errno.EPIPE, 'gotcha'))
+            conn.sock = sock
 
             try:
                 yield from conn.request("PUT", "/url", "body"*1000000)
@@ -916,7 +966,7 @@ class BasicTest(TestCase):
             else:
                 self.assertTrue(False, 'OSError')
 
-        _run_with_server(_run, [(BREAK, b'Content-'), RECEIVE, expected])
+        _run_with_server_pre(_run, [RECEIVE, expected])
 
     def test_wwwauth(self):
 
@@ -1017,41 +1067,36 @@ class BasicTest(TestCase):
 
         _run_with_server_pre(_run, body)
 
-    def tst_delayed_ack_opt(self):
+    def test_delayed_ack_opt(self):
         # Test that Nagle/delayed_ack optimistaion works correctly.
 
         # For small payloads, it should coalesce the body with
         # headers, resulting in a single sendall() call
         @asyncio.coroutine
-        def _run(host, port):
+        def _run(sock):
 
-            conn = aioclient.HTTPConnection(host, port)
-            #sock = FakeSocket(None)
-            #conn.sock = sock
+            conn = aioclient.HTTPConnection('example.com')
+            sock = FauxSocket(sock=sock)
+            conn.sock = sock
             body = b'x' * (conn.mss - 1)
             yield from conn.request('POST', '/', body)
-            self.assertEqual(sock.data.sockcalls, 1)
+            totCalls = sock._data['sendall_calls'] + sock._data['send_calls']
+            self.assertEqual(totCalls, 1)
 
-        streamReader = asyncio.StreamReader()
-        srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_run, srvr=srvr)
+        _run_with_server_pre(_run, '')
 
-        def _run1(host, port):
-            # For large payloads, it should send the headers and
-            # then the body, resulting in more than one sendall()
-            # call
-            conn = aioclient.HTTPConnection(host, port)
-            #sock = FakeSocket(None)
-            #conn.sock = sock
+        @asyncio.coroutine
+        def _run1(sock):
+
+            conn = aioclient.HTTPConnection('example.com')
+            sock = FauxSocket(sock=sock)
+            conn.sock = sock
             body = b'x' * conn.mss * 2
             yield from conn.request('POST', '/', body)
-            d = yield from streamReader.read()
-            self.assertTrue(len(d) >= len(body), 'too little sent %s vs %s' % (len(d), len(body)))
-            self.assertEqual(len(srvr.received), 1)
+            totCalls = sock._data['sendall_calls'] + sock._data['send_calls']
+            self.assertGreater(totCalls, 1)
 
-        streamReader = asyncio.StreamReader()
-        srvr, _ = _prep_server('', prime=False, reader=streamReader)
-        _run_with_server(_run1, srvr=srvr)
+        _run_with_server_pre(_run1, '')
 
     def test_chunked_extension(self):
         extra = '3;foo=bar\r\n' + 'abc\r\n'

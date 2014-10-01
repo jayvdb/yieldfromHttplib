@@ -16,7 +16,7 @@ import time
 
 import unittest
 import testtcpserver as server
-from testtcpserver import RECEIVE, BREAK
+from testtcpserver import RECEIVE, FauxSocket
 
 os.environ['PYTHONASYNCIODEBUG'] = '1'
 
@@ -72,95 +72,6 @@ def async_test(f):
 async_test.__test__ = False # not a test
 
 
-class FauxSocket(socket.socket):
-    """subclass of a true socket"""
-
-    def __init__(self, family=socket.AF_INET, type=socket.SOCK_STREAM, sock=None, *args, **kwargs):
-        self._data = {'sendall_calls': 0,
-                      'send_calls': 0,
-                      'data_out': b'',
-                      'cue': None,
-                      'throw': None}
-        if sock is not None:
-            super(FauxSocket, self).__init__(family=sock.family, type=sock.type, proto=sock.proto, fileno=sock.fileno())
-            self.settimeout(sock.gettimeout())
-            sock.detach()
-        else:
-            super(FauxSocket, self).__init__(family, type, *args, **kwargs)
-
-    def sendall(self, data):
-        self._data['sendall_calls'] += 1
-        self._data['data_out'] += data
-        self.testBreak()
-        return socket.socket.sendall(self, data)
-
-    def send(self, data):
-        self._data['send_calls'] += 1
-        self._data['data_out'] += data
-        self.testBreak()
-        return socket.socket.send(self, data)
-
-    def testBreak(self):
-        cue = self._data['cue']
-        if cue is not None and cue in self._data['data_out']:
-            raise self._data['throw']
-
-    def breakOn(self, cue, exc):
-        """registers cue, and when cue is seen in send data, exception is thrown"""
-        self._data['cue'] = cue
-        self._data['throw'] = exc
-
-class FakeSocket:
-    def __init__(self, text, fileclass=io.BytesIO, host=None, port=None):
-        if isinstance(text, str):
-            text = text.encode("ascii")
-        self.text = text
-        self.fileclass = fileclass
-        self.data = b''
-        self.sendall_calls = 0
-        self.host = host
-        self.port = port
-
-    def sendall(self, data):
-        self.sendall_calls += 1
-        self.data += data
-
-
-class EPipeSocket(FakeSocket):
-
-    def __init__(self, text, pipe_trigger):
-        # When sendall() is called with pipe_trigger, raise EPIPE.
-        FakeSocket.__init__(self, text)
-        self.pipe_trigger = pipe_trigger
-
-    def sendall(self, data):
-        if self.pipe_trigger in data:
-            raise OSError(errno.EPIPE, "gotcha")
-        self.data += data
-
-    def close(self):
-        pass
-
-
-class NoEOFBytesIO(io.BytesIO):
-    """Like BytesIO, but raises AssertionError on EOF.
-
-    This is used below to test that http.aioclient doesn't try to read
-    more from the underlying file than it should.
-    """
-    def read(self, n=-1):
-        data = io.BytesIO.read(self, n)
-        if data == b'':
-            raise AssertionError('caller tried to read past EOF')
-        return data
-
-    def readline(self, length=None):
-        data = io.BytesIO.readline(self, length)
-        if data == b'':
-            raise AssertionError('caller tried to read past EOF')
-        return data
-
-
 def open_socket_conn(host='127.0.0.1', port=2222):
     """  """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -174,7 +85,7 @@ def _prep_server(body, prime=False, reader=None):
         commands.extend(body)
     else:
         commands.extend([RECEIVE, body])
-    srvr = server.AsyncioCommandServer(commands, testLoop if reader else None, reader, *CONNECT)
+    srvr = server.AsyncioCommandServer(commands, testLoop if reader else None, reader, *CONNECT, verbose=False)
     if prime:
         sock = open_socket_conn(*CONNECT)
         sock.sendall(b' ')
@@ -232,7 +143,7 @@ class HeaderTests(TestCase):
                     yield from conn.request('POST', '/', body, headers)
                     self.assertEqual(conn._buffer.count[header.lower()], 1)
 
-        srvr = server.CommandServer([RECEIVE, 'blahblahblah'])
+        srvr = server.CommandServer([RECEIVE, 'blahblahblah'], verbose=False)
         testLoop.run_until_complete(_run())
         srvr.stop()
 
@@ -263,13 +174,13 @@ class HeaderTests(TestCase):
             yield from asyncio.wait_for(conn.request('PUT', '/', ''), 5.0)
             self.assertEqual(conn._buffer.content_length, b'0', 'Header Content-Length not set')
 
-        srvr = server.CommandServer([RECEIVE, '', RECEIVE, ''])
+        srvr = server.CommandServer([RECEIVE, '', RECEIVE, ''], verbose=False)
         testLoop.run_until_complete(_run())
         srvr.stop()
 
     def test_putheader(self):
         conn = aioclient.HTTPConnection('example.com')
-        conn.sock = FakeSocket(None)
+        conn.sock = FauxSocket()
         conn.putrequest('GET','/')
         conn.putheader('Content-length', 42)
         self.assertIn(b'Content-length: 42', conn._buffer)
@@ -1781,47 +1692,56 @@ class HTTPResponseTest(TestCase):
 
 class TunnelTests(TestCase):
 
+    # this test is not quite right. sometimes it works, and sometimes not
     def tst_connect(self):
         response_text = (
             'HTTP/1.0 200 OK\r\n\r\n', # Reply to CONNECT
-            'HTTP/1.1 200 OK\r\n', # Reply to HEAD
+            'HTTP/1.1 200 OK\r\n' # Reply to HEAD
             'Content-Length: 42\r\n\r\n'
         )
 
-        #def create_connection(address, timeout=None, source_address=None):
-        #    return FakeSocket(response_text, host=address[0], port=address[1])
+        def create_connection(address, timeout=None, source_address=None):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect(address)
+            return FauxSocket(sock=sock, host=address[0], port=address[1])
 
         @asyncio.coroutine
         def _run(host, port):
 
             conn = aioclient.HTTPConnection(host, port)
-            #conn._create_connection = create_connection
+            conn._create_connection = create_connection
 
+            #print('create connect 1')
             # Once connected, we shouldn't be able to tunnel anymore
-            #yield from conn.connect()
-            #self.assertRaises(RuntimeError, conn.set_tunnel, 'destination.com')
+            yield from conn.connect()
+            self.assertRaises(RuntimeError, conn.set_tunnel, 'destination.com')
 
             # But if we close the connection, we're good
-            #conn.close()
+            #print('close 1')
+            conn.close()
             conn.set_tunnel('destination.com')
             yield from conn.request('HEAD', '/', '')
+            #print('head requested')
 
-            self.assertEqual(conn.sock.host, 'proxy.com')
-            self.assertEqual(conn.sock.port, 80)
-            self.assertTrue(b'CONNECT destination.com' in conn.sock.data)
-            self.assertTrue(b'Host: destination.com' in conn.sock.data)
+            self.assertEqual(conn.sock.host, '127.0.0.1')
+            self.assertEqual(conn.sock.port, port)
+            self.assertTrue(b'CONNECT destination.com' in conn.sock._data['data_out'])
+            self.assertTrue(b'Host: destination.com' in conn.sock._data['data_out'])
 
             # This test should be removed when CONNECT gets the HTTP/1.1 blessing
-            self.assertTrue(b'Host: proxy.com' not in conn.sock.data)
+            self.assertTrue(b'Host: 127.0.0.1' not in conn.sock._data['data_out'])
 
+            #print('close 2')
             conn.close()
             yield from conn.request('PUT', '/', '')
-            self.assertEqual(conn.sock.host, 'proxy.com')
-            self.assertEqual(conn.sock.port, 80)
-            self.assertTrue(b'CONNECT destination.com' in conn.sock.data)
-            self.assertTrue(b'Host: destination.com' in conn.sock.data)
+            #print('PUT requested')
+            self.assertEqual(conn.sock.host, '127.0.0.1')
+            self.assertEqual(conn.sock.port, port)
+            self.assertTrue(b'CONNECT destination.com' in conn.sock._data['data_out'])
+            self.assertTrue(b'Host: destination.com' in conn.sock._data['data_out'])
 
-        _run_with_server(_run, [response_text[0], RECEIVE, response_text[1], RECEIVE, response_text[2]])
+        _run_with_server(_run, [RECEIVE, response_text[0], 39, response_text[1],
+                                93, response_text[1], 39, response_text[1], 92])
 
 
 def main(verbose=None):

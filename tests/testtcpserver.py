@@ -15,6 +15,47 @@ import time
 PY3 = sys.version > '3'
 
 
+class FauxSocket(socket.socket):
+    """subclass of a true socket"""
+
+    def __init__(self, family=socket.AF_INET, type=socket.SOCK_STREAM, sock=None, host=None, port=None, *args, **kwargs):
+        self._data = {'sendall_calls': 0,
+                      'send_calls': 0,
+                      'data_out': b'',
+                      'cue': None,
+                      'throw': None}
+        self.host = host
+        self.port = port
+        if sock is not None:
+            super(FauxSocket, self).__init__(family=sock.family, type=sock.type, proto=sock.proto, fileno=sock.fileno())
+            self.settimeout(sock.gettimeout())
+            sock.detach()
+        else:
+            super(FauxSocket, self).__init__(family, type, *args, **kwargs)
+
+    def sendall(self, data):
+        self._data['sendall_calls'] += 1
+        self._data['data_out'] += data
+        self.testBreak()
+        return socket.socket.sendall(self, data)
+
+    def send(self, data):
+        self._data['send_calls'] += 1
+        self._data['data_out'] += data
+        self.testBreak()
+        return socket.socket.send(self, data)
+
+    def testBreak(self):
+        cue = self._data['cue']
+        if cue is not None and cue in self._data['data_out']:
+            raise self._data['throw']
+
+    def breakOn(self, cue, exc):
+        """registers cue, and when cue is seen in send data, exception is thrown"""
+        self._data['cue'] = cue
+        self._data['throw'] = exc
+
+
 class TestTCPServer:
     '''A simple socket server so that specific error conditions can be tested.
     This must be subclassed and implment the "server()" method.
@@ -106,7 +147,6 @@ class GenericServer(TestTCPServer):
                 conn.send(bytes(data))
 
     def server(self, sock, conn, count):
-        filters = {}
         conn.settimeout(2.0)
         for command in self.commands:
             if self.STOPPED:
@@ -115,15 +155,12 @@ class GenericServer(TestTCPServer):
                 try:
                     command = command if command else 1
                     d = self._recieveData(conn, abs(command))
-                    for nm, func in filters:
-                        if nm in d and func is not None:
-                            func()
                     self.withReceivedData(d)
+                except ConnectionAbortedError as e:
+                    return
                 except socket.timeout:
                     self.STOPPED = True
                     break
-            elif type(command) == tuple:
-                filters[command[1]] = lambda: conn.close()
             else:
                 self._sendData(conn, command)
 

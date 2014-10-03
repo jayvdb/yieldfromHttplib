@@ -261,9 +261,13 @@ def parse_headers(fp, _class=HTTPMessage, timeout=5.0):
     headers = []
     while True:
         try:
-            line = yield from asyncio.wait_for(fp.readline(), timeout) # todo trap ValueError
-            if len(line) > _MAXLINE:
-                raise LineTooLong("header line")
+            try:
+                line = yield from asyncio.wait_for(fp.readline(), timeout)
+            except ValueError as e:
+                if 'is too long' in e.args[0]:
+                    raise LineTooLong("header line")
+                else:
+                    raise
             headers.append(line)
             if len(headers) > _MAXHEADERS:
                 raise HTTPException("got more than %d headers" % _MAXHEADERS)
@@ -326,6 +330,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         assert self.fp is None
         reader, writer = yield from asyncio.open_connection(sock=self.sock)
         #writer.write_eof() # breaks SSL to close either channel
+        reader._limit = _MAXLINE
         self.fp = reader
         self.sock = None
 
@@ -339,8 +344,6 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
             else:
                 raise
         line = str(line, "iso-8859-1")
-        if len(line) > _MAXLINE:
-            raise LineTooLong("status line")
         if self.debuglevel > 0:
             print("reply:", repr(line))
         if not line:
@@ -382,9 +385,13 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
                 break
             # skip the header from the 100 response
             while True:
-                skip = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT) # todo trap ValueError
-                if len(skip) > _MAXLINE:
-                    raise LineTooLong("header line")
+                try:
+                    skip = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
+                except ValueError as e:
+                    if 'is too long' in e.args[0]:
+                        raise LineTooLong('header line')
+                    else:
+                        raise
                 skip = skip.strip()
                 if not skip:
                     break
@@ -594,8 +601,6 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
                 raise LineTooLong('chunk size')
             else:
                 raise
-        if len(line) > _MAXLINE:
-            raise LineTooLong("chunk size")
         i = line.find(b";")
         if i >= 0:
             line = line[:i] # strip chunk-extensions
@@ -612,9 +617,13 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         # read and discard trailer up to the CRLF terminator
         ### note: we shouldn't have any trailers!
         while True:
-            line = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
-            if len(line) > _MAXLINE:
-                raise LineTooLong("trailer line")
+            try:
+                line = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
+            except ValueError as e:
+                if 'is too long' in e.args[0]:
+                    raise LineTooLong('trailer line')
+                else:
+                    raise
             if not line:
                 # a vanishingly small number of sites EOF without
                 # sending the trailer
@@ -839,9 +848,19 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     def getcode(self):
         return self.status
 
+@asyncio.coroutine
+def create_connection(address, timeout=None, source_address=None, loop=None, ssl=None, server_hostname=None):
 
-def create_connection(*args, **kwargs):
-    return socket.create_connection(*args, **kwargs)  # todo - make async
+    def _tmp_protocol():
+         return asyncio.Protocol()
+
+    if loop is None:
+        loop = asyncio.get_event_loop()
+    host, port = address
+    (transport, protocol) = yield from loop.create_connection(_tmp_protocol, host, port, ssl=ssl,
+                                                              local_addr=source_address)
+    sock = transport.get_extra_info('socket')
+    return sock
 
 
 class HTTPConnection:
@@ -953,9 +972,13 @@ class HTTPConnection:
             self.close()
             raise OSError("Tunnel connection failed: %d %s" % (code, message.strip()))
         while True:
-            line = yield from asyncio.wait_for(response.fp.readline(), self.TIMEOUT) # todo - trap ValueError
-            if len(line) > _MAXLINE:
-                raise LineTooLong("header line")
+            try:
+                line = yield from asyncio.wait_for(response.fp.readline(), self.TIMEOUT)
+            except ValueError as e:
+                if 'is too long' in e.args[0]:
+                    raise LineTooLong('header line')
+                else:
+                    raise
             if not line:
                 # for sites which EOF without sending a trailer
                 break
@@ -965,7 +988,8 @@ class HTTPConnection:
     @asyncio.coroutine
     def connect(self):
         """Connect to the host and port specified in __init__."""
-        self.sock = self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
+
+        self.sock = yield from self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
 
         if self._tunnel_host:
             yield from self._tunnel()
@@ -973,6 +997,9 @@ class HTTPConnection:
     def close(self):
         """Close the connection to the HTTP server."""
         if self.sock:
+            if self.sock.fileno() > -1:
+                self.loop.remove_reader(self.sock.fileno())
+                self.loop.remove_writer(self.sock.fileno())
             self.sock.close()   # close it manually... there may be other refs
             self.sock = None
         if self.__response:
@@ -1060,6 +1087,7 @@ class HTTPConnection:
             # message_body was not a string (i.e. it is a file), and
             # we must run the risk of Nagle.
             yield from self.send(message_body)
+
 
     def putrequest(self, method, url, skip_host=0, skip_accept_encoding=0):
         """Send a request to the server.
@@ -1224,6 +1252,7 @@ class HTTPConnection:
     def request(self, method, url, body=None, headers={}):
         """Send a complete request to the server."""
         yield from self._send_request(method, url, body, headers)
+        pass
 
     def _set_content_length(self, body):
         # Set the content-length based on the body.
@@ -1356,24 +1385,34 @@ else:
         def connect(self):
             "Connect to a host on a given (SSL) port."
 
-            #super().connect()
-            yield from super(HTTPSConnection, self).connect()
+            self.sock = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
+                                                           self.source_address, ssl=self._context,
+                                                           server_hostname=None)
 
+            if self._tunnel_host:
+                yield from self._tunnel()
+
+            #
+            # #super().connect()
+            # yield from super(HTTPSConnection, self).connect()
+            #
             if self._tunnel_host:
                 server_hostname = self._tunnel_host
             else:
                 server_hostname = self.host
             sni_hostname = server_hostname if ssl.HAS_SNI else None
-
-            self.sock = self._context.wrap_socket(self.sock, server_hostname=sni_hostname,
-                                                  do_handshake_on_connect=True)
+            #
+            # self.sock = self._context.wrap_socket(self.sock, server_hostname=sni_hostname,
+            #                                       do_handshake_on_connect=False)
             if not self._context.check_hostname and self._check_hostname:
                 try:
                     ssl.match_hostname(self.sock.getpeercert(), server_hostname)
-                except Exception:
-                    self.sock.shutdown(socket.SHUT_RDWR)
-                    self.sock.close()
+                except Exception as e:
+                    self.close()
+                    #self.sock.shutdown(socket.SHUT_RDWR)
+                    #self.sock.close()
                     raise
+
 
     __all__.append("HTTPSConnection")
 

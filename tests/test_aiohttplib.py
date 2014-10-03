@@ -143,7 +143,7 @@ class HeaderTests(TestCase):
                     yield from conn.request('POST', '/', body, headers)
                     self.assertEqual(conn._buffer.count[header.lower()], 1)
 
-        srvr = server.CommandServer([RECEIVE, 'blahblahblah'], verbose=False)
+        srvr = server.CommandServer([RECEIVE, 'blahblahblah'], verbose=True)
         testLoop.run_until_complete(_run())
         srvr.stop()
 
@@ -1308,7 +1308,7 @@ class SourceAddressTest(TestCase):
     @async_test
     def testHTTPConnectionSourceAddress(self):
         self.conn = aioclient.HTTPConnection(HOST, self.port,
-                source_address=('', self.source_port))
+                source_address=('127.0.0.1', self.source_port))
         yield from self.conn.connect()
         self.assertEqual(self.conn.sock.getsockname()[1], self.source_port)
 
@@ -1321,55 +1321,56 @@ class SourceAddressTest(TestCase):
         # this code doesn't deal with setting up an active running SSL server
         # for an ssl_wrapped connect() to actually return from.
 
+# sockets with asyncio are non-blocking, and timeouts are not relevant to test.
 
-class TimeoutTest(TestCase):
-    PORT = None
-
-    def _setUp(self):
-        self.serv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        TimeoutTest.PORT = 2222 #support.bind_port(self.serv)
-        self.serv.bind(('127.0.0.1', 2222))
-        self.serv.listen(1)
-        time.sleep(1)
-
-    def _tearDown(self):
-        self.serv.close()
-        self.serv = None
-
-    def testTimeoutAttribute(self):
-        # This will prove that the timeout gets through HTTPConnection
-        # and into the socket.
-
-        def _run(host, port):
-            # default -- use global socket timeout
-            self.assertIsNone(socket.getdefaulttimeout())
-            socket.setdefaulttimeout(30)
-            try:
-                httpConn = aioclient.HTTPConnection(host, port)
-                yield from httpConn.connect()
-            finally:
-                socket.setdefaulttimeout(None)
-            self.assertEqual(httpConn.sock.gettimeout(), 30)
-            httpConn.close()
-
-            # no timeout -- do not use global socket default
-            self.assertIsNone(socket.getdefaulttimeout())
-            socket.setdefaulttimeout(30)
-            try:
-                httpConn = aioclient.HTTPConnection(host, port, timeout=None)
-                yield from httpConn.connect()
-            finally:
-                socket.setdefaulttimeout(None)
-            self.assertEqual(httpConn.sock.gettimeout(), None)
-            httpConn.close()
-
-            # a value
-            httpConn = aioclient.HTTPConnection(host, port, timeout=30)
-            yield from httpConn.connect()
-            self.assertEqual(httpConn.sock.gettimeout(), 30)
-            httpConn.close()
-
-        _run_with_server(_run, '')
+# class TimeoutTest(TestCase):
+#     PORT = None
+#
+#     def _setUp(self):
+#         self.serv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#         TimeoutTest.PORT = 2222 #support.bind_port(self.serv)
+#         self.serv.bind(('127.0.0.1', 2222))
+#         self.serv.listen(1)
+#         time.sleep(1)
+#
+#     def _tearDown(self):
+#         self.serv.close()
+#         self.serv = None
+#
+#     def testTimeoutAttribute(self):
+#         # This will prove that the timeout gets through HTTPConnection
+#         # and into the socket.
+#
+#         def _run(host, port):
+#             # default -- use global socket timeout
+#             self.assertIsNone(socket.getdefaulttimeout())
+#             socket.setdefaulttimeout(30)
+#             try:
+#                 httpConn = aioclient.HTTPConnection(host, port)
+#                 yield from httpConn.connect()
+#             finally:
+#                 socket.setdefaulttimeout(None)
+#             self.assertEqual(httpConn.sock.gettimeout(), 30)
+#             httpConn.close()
+#
+#             # no timeout -- do not use global socket default
+#             self.assertIsNone(socket.getdefaulttimeout())
+#             socket.setdefaulttimeout(30)
+#             try:
+#                 httpConn = aioclient.HTTPConnection(host, port, timeout=None)
+#                 yield from httpConn.connect()
+#             finally:
+#                 socket.setdefaulttimeout(None)
+#             self.assertEqual(httpConn.sock.gettimeout(), None)
+#             httpConn.close()
+#
+#             # a value
+#             httpConn = aioclient.HTTPConnection(host, port, timeout=30)
+#             yield from httpConn.connect()
+#             self.assertEqual(httpConn.sock.gettimeout(), 30)
+#             httpConn.close()
+#
+#         _run_with_server(_run, '')
 
 
 class HTTPSTest(TestCase):
@@ -1382,10 +1383,10 @@ class HTTPSTest(TestCase):
         from test.ssl_servers import make_https_server
         return make_https_server(self, certfile=certfile)
 
-    def test_attributes(self):
-        # simple test to check it's storing the timeout
-        h = aioclient.HTTPSConnection(HOST, TimeoutTest.PORT, timeout=30)
-        self.assertEqual(h.TIMEOUT, 30)
+    # def test_attributes(self):
+    #     # simple test to check it's storing the timeout
+    #     h = aioclient.HTTPSConnection(HOST, TimeoutTest.PORT, timeout=30)
+    #     self.assertEqual(h.TIMEOUT, 30)
 
     def _check_svn_python_org(self, resp):
         # Just a simple check that everything went fine

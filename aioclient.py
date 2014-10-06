@@ -997,9 +997,10 @@ class HTTPConnection:
     def close(self):
         """Close the connection to the HTTP server."""
         if self.sock:
-            if self.sock.fileno() > -1:
-                self.loop.remove_reader(self.sock.fileno())
-                self.loop.remove_writer(self.sock.fileno())
+            fNo = self.sock.fileno()
+            if fNo > -1:
+                self.loop.remove_reader(fNo)
+                self.loop.remove_writer(fNo)
             self.sock.close()   # close it manually... there may be other refs
             self.sock = None
         if self.__response:
@@ -1385,22 +1386,19 @@ else:
         def connect(self):
             "Connect to a host on a given (SSL) port."
 
-            self.sock = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
-                                                           self.source_address, ssl=self._context,
-                                                           server_hostname=None)
-
-            if self._tunnel_host:
-                yield from self._tunnel()
-
-            #
-            # #super().connect()
-            # yield from super(HTTPSConnection, self).connect()
-            #
             if self._tunnel_host:
                 server_hostname = self._tunnel_host
             else:
                 server_hostname = self.host
-            sni_hostname = server_hostname if ssl.HAS_SNI else None
+
+            self.sock = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
+                                                           self.source_address, ssl=self._context,
+                                                           server_hostname=server_hostname)
+
+            if self._tunnel_host:
+                yield from self._tunnel()
+                self.auto_open = 0
+
             #
             # self.sock = self._context.wrap_socket(self.sock, server_hostname=sni_hostname,
             #                                       do_handshake_on_connect=False)
@@ -1409,8 +1407,6 @@ else:
                     ssl.match_hostname(self.sock.getpeercert(), server_hostname)
                 except Exception as e:
                     self.close()
-                    #self.sock.shutdown(socket.SHUT_RDWR)
-                    #self.sock.close()
                     raise
 
 

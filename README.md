@@ -9,16 +9,16 @@ The classes are named the same as in http.client.
 class http.client.HTTPConnection(host, port=None, [timeout, ]source_address=None)
 
     conn = HTTPConnection('localhost', 8000)
-    #
+    
     r = yield from conn.request('GET', '/pagename')
     resp = yield from conn.getresponse()
-    #
+    
     yield from conn.connect()
     conn.putrequest(..)
     conn.putheader('X-Whatever', 'yesno')
     yield from conn.endheaders('message body')
     yield from conn.send('more body')
-    #
+    
     resp = yield from conn.getresponse()
     # returns an HTTPResponse object
     

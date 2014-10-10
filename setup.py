@@ -8,4 +8,11 @@ setup(
     name = 'yieldfrom.http.client',
     description = 'asyncio version of http.client',
     install_requires = ['setuptools',],
+
+    author = 'David Keeney',
+    author_email = 'dkeeney@rdbhost.com',
+    license = 'Python Software Foundation License',
+
+    keywords = 'asyncio, http, http.client',
+    url = 'http://github.com/rdbhost/'
     )

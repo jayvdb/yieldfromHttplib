@@ -1,7 +1,7 @@
 yieldfromHttpLib
 ==============
 
-Asyncio conversion of http.client)
+Asyncio conversion of http.client
 
 
 The classes are named the same as in http.client.

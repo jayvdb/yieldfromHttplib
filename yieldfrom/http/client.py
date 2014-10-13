@@ -772,18 +772,48 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     #         return self._peek_chunked(n)
     #     return self.fp.peek(n)
 
-    # @asyncio.coroutine
-    # def readline(self, limit=-1):
-    #     if self.fp is None or self._method == "HEAD":
-    #         return b""
-    #     if self.chunked:
-    #         # Fallback to IOBase readline which uses peek() and read()
-    #         return super().readline(limit)
-    #     result = yield from self.fp.readline(limit)
-    #     if not result and limit:
-    #         self._close_conn()
-    #     return result
-    #
+    # TODO - add tests for readline  and re-upload to PyPI
+
+    @asyncio.coroutine
+    def _chunked_readline(self):
+        assert self.chunked != _UNKNOWN
+        s = []
+        total_bytes = 0
+        while True:
+            chunk_left = yield from self._get_chunk_left()
+            if chunk_left is None:
+                return b''.join(s)
+
+            data = yield from self._safe_read(1)
+            s.append(data)
+            total_bytes += len(data)
+            if data == b'\n':
+                return b''.join(s)
+            if total_bytes > _MAXLINE:
+                raise LineTooLong('readline')
+
+    @asyncio.coroutine
+    def readline(self, limit=-1):
+        if self.fp is None or self._method == "HEAD":
+            return b""
+        if self.chunked:
+            # Fallback to IOBase readline which uses peek() and read()
+            ret = yield from self._chunked_readline()
+        result = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
+        if not result and limit:
+            self._close_conn()
+        return result
+
+    @asyncio.coroutine
+    def readlines(self, ct):
+        if self.fp is None or self._method == "HEAD":
+            return b""
+        lines = []
+        while len(lines) < ct:
+            line = yield from self.readline()
+            lines.append(line)
+        return lines
+
     # @asyncio.coroutine
     # def _read1_chunked(self, n):
     #     # Strictly speaking, _get_chunk_left() may cause more than one read,

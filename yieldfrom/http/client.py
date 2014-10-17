@@ -73,6 +73,7 @@ import io
 import os
 import socket
 import collections
+import sys
 from urllib.parse import urlsplit
 
 __all__ = ["HTTPResponse", "HTTPConnection",
@@ -291,7 +292,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     # text following RFC 2047.  The basic status line parsing only
     # accepts iso-8859-1.
 
-    def __init__(self, sock, debuglevel=0, method=None, url=None):
+    def __init__(self, reader, debuglevel=0, method=None, url=None):
         # If the response includes a content-length header, we need to
         # make sure that the client doesn't read more than the
         # specified number of bytes.  If it does, it will block until
@@ -299,9 +300,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         # happen if a self.fp.read() is done (without a size) whether
         # self.fp is buffered or not.  So, no self.fp.read() by
         # clients unless they know what they are doing.
-        self.sock = sock
-        self.fp = None
-        #self.fp, jnk = yield from asyncio.open_connection(sock=sock)
+        self.fp = reader
         #self.fp = sock.makefile("rb")
         self.debuglevel = debuglevel
         self.TIMEOUT = 5.0
@@ -327,12 +326,13 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
 
     @asyncio.coroutine
     def init(self):
-        assert self.fp is None
-        reader, writer = yield from asyncio.open_connection(sock=self.sock)
-        #writer.write_eof() # breaks SSL to close either channel
-        reader._limit = _MAXLINE
-        self.fp = reader
-        self.sock = None
+        yield None
+        # assert self.fp is None
+        # reader, writer = yield from asyncio.open_connection(sock=self.soCk)
+        # #writer.write_eof() # breaks SSL to close either channel
+        # reader._limit = _MAXLINE
+        # self.fp = reader
+        #self.soCk = None
 
     @asyncio.coroutine
     def _read_status(self):
@@ -488,9 +488,10 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         return True
 
     def _close_conn(self):
-        fp = self.fp      # maybe .drain() and make coroutine
+        fp = self.fp
         self.fp = None
-        #fp.close()
+        fp.feed_eof()
+        fp._buffer = b''
 
     def close(self):
         super().close() # set "closed" flag
@@ -553,6 +554,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
                     self._close_conn()
                     raise
                 self.length = 0
+
             self._close_conn()        # we read everything
             return s
 
@@ -698,6 +700,30 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
             raise IncompleteRead(bytes(b[0:total_bytes]))
 
     @asyncio.coroutine
+    def _read_with_timeout(self, amt, timeout=None):
+        """in case connection does not see close, and timeout ends read."""
+        timeout = timeout or self.TIMEOUT
+        amtLim = min(amt, MAXAMOUNT)
+        try:
+            d = yield from asyncio.wait_for(self.fp.read(amtLim), timeout)
+        except asyncio.TimeoutError as e:
+            self.fp.feed_eof()
+            d = yield from asyncio.wait_for(self.fp.read(), timeout)
+        return d
+
+    @asyncio.coroutine
+    def _readline_with_timeout(self, timeout=None):
+        """in case connection does not see close, and timeout ends read."""
+        timeout = timeout or self.TIMEOUT
+        amtLim = min(amt, MAXAMOUNT)
+        try:
+            d = yield from asyncio.wait_for(self.fp.readline(), timeout)
+        except asyncio.TimeoutError as e:
+            self.fp.feed_eof()
+            d = yield from asyncio.wait_for(self.fp.read(), timeout)
+        return d
+
+    @asyncio.coroutine
     def _safe_read(self, amt):
         """Read the number of bytes requested, compensating for partial reads.
 
@@ -714,7 +740,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         """
         s = []
         while amt > 0:
-            chunk = yield from self.fp.read(min(amt, MAXAMOUNT))
+            chunk = yield from self._read_with_timeout(amt)
             if not chunk:
                 raise IncompleteRead(b''.join(s), amt)
             s.append(chunk)
@@ -732,7 +758,8 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
             else:
                 temp_mvb = mvb[:]
             bLen = len(temp_mvb)
-            _b = yield from self.fp.read(bLen)
+            #_b = yield from asyncio.wait_for(self.fp.read(bLen), self.TIMEOUT)
+            _b = yield from self._read_with_timeout(bLen)
             n = len(_b)
             temp_mvb[0:n] = _b
 #            n = yield from self.fp.readinto(temp_mvb)
@@ -772,8 +799,6 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     #         return self._peek_chunked(n)
     #     return self.fp.peek(n)
 
-    # TODO - add tests for readline  and re-upload to PyPI
-
     @asyncio.coroutine
     def _chunked_readline(self):
         assert self.chunked != _UNKNOWN
@@ -792,14 +817,16 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
             if total_bytes > _MAXLINE:
                 raise LineTooLong('readline')
 
+
     @asyncio.coroutine
-    def readline(self, limit=-1):
+    def readline(self):
         if self.fp is None or self._method == "HEAD":
             return b""
         if self.chunked:
             # Fallback to IOBase readline which uses peek() and read()
             ret = yield from self._chunked_readline()
-        result = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
+        #result = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
+        result = yield from self._readline_with_timeout()
         if not result and limit:
             self._close_conn()
         return result
@@ -879,18 +906,24 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         return self.status
 
 @asyncio.coroutine
-def create_connection(address, timeout=None, source_address=None, loop=None, ssl=None, server_hostname=None):
+def create_connection(address, timeout=None, source_address=None, loop=None,
+                      ssl=None, server_hostname=None):
 
-    def _tmp_protocol():
-         return asyncio.Protocol()
+    #def _tmp_protocol():
+    #     return asyncio.Protocol()
 
     if loop is None:
         loop = asyncio.get_event_loop()
     host, port = address
-    (transport, protocol) = yield from loop.create_connection(_tmp_protocol, host, port, ssl=ssl,
-                                                              local_addr=source_address)
-    sock = transport.get_extra_info('socket')
-    return sock
+    #(transport, protocol) = yield from loop.create_connection(asyncio.StreamReader, host, port, ssl=ssl,
+    #                                                          local_addr=source_address)
+
+    reader, writer = yield from asyncio.open_connection(host, port, ssl=ssl, limit=_MAXLINE,
+                                                     local_addr=source_address)
+
+    #sock = transport.get_extra_info('socket')
+    #return sock
+    return reader, writer
 
 
 class HTTPConnection:
@@ -918,7 +951,8 @@ class HTTPConnection:
             timeout = 30.0
         self.TIMEOUT = timeout
         self.source_address = source_address
-        self.sock = None
+        self.reader = None
+        self.writer = None
         self._buffer = []
         self.__response = None
         self.__state = _CS_IDLE
@@ -948,7 +982,7 @@ class HTTPConnection:
         with the CONNECT request.
         """
 
-        if self.sock:
+        if self.reader:
             raise RuntimeError("Can't set up tunnel for established connection")
 
         self._tunnel_host = host
@@ -994,7 +1028,7 @@ class HTTPConnection:
             yield from self.send(header_bytes)
         yield from self.send(b'\r\n')
 
-        response = self.response_class(self.sock, method=self._method)
+        response = self.response_class(self.reader, method=self._method)
         yield from response.init()
         (version, code, message) = yield from response._read_status()
 
@@ -1019,20 +1053,31 @@ class HTTPConnection:
     def connect(self):
         """Connect to the host and port specified in __init__."""
 
-        self.sock = yield from self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
+        #t, p = yield from self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
+        r, w = yield from self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
+
+        self.writer = w
+        self.reader = r
 
         if self._tunnel_host:
             yield from self._tunnel()
 
     def close(self):
         """Close the connection to the HTTP server."""
-        if self.sock:
-            fNo = self.sock.fileno()
-            if fNo > -1:
-                self.loop.remove_reader(fNo)
-                self.loop.remove_writer(fNo)
-            self.sock.close()   # close it manually... there may be other refs
-            self.sock = None
+
+        if self.reader:
+            self.reader.feed_eof()
+            self.reader._buffer = b''
+        if self.writer:
+            self.writer.write_eof()
+            self.writer.close()
+        # if self.soCk:
+        #     fNo = self.soCk.fileno()
+        #     if fNo > -1:
+        #         self.loop.remove_reader(fNo)
+        #         self.loop.remove_writer(fNo)
+        #     self.soCk.close()   # close it manually... there may be other refs
+        #     self.soCk = None
         if self.__response:
             self.__response.close()
             self.__response = None
@@ -1045,7 +1090,7 @@ class HTTPConnection:
         file-like object that supports a .read() method, or an iterable object.
         """
 
-        if self.sock is None:
+        if self.reader is None:
             if self.auto_open:
                 yield from self.connect()
             else:
@@ -1075,17 +1120,24 @@ class HTTPConnection:
                     break
                 if encode:
                     datablock = datablock.encode("iso-8859-1")
-                yield from self.loop.sock_sendall(self.sock, datablock)
+                # yield from self.loop.sock_sendall(self.soCk, datablock)
+                self.writer.write(datablock)
+                yield from self.writer.drain()
             return
         try:
-            yield from self.loop.sock_sendall(self.sock, data)
+            # yield from self.loop.sock_sendall(self.soCk, data)
+            self.writer.write(data)
+            yield from self.writer.drain()
         except TypeError:
             if isinstance(data, collections.Iterable):
-                for d in data:
-                    yield from self.loop.sock_sendall(self.sock, d)
+                 for d in data:
+                     #yield from self.loop.sock_sendall(self.soCk, d)
+                     #d = chr(d).encode('ascii')
+                     self.writer.write(d)
+                     yield from self.writer.drain()
             else:
-                raise TypeError("data should be a bytes-like object "
-                                "or an iterable, got %r" % type(data))
+                 raise TypeError("data should be a bytes-like object, got %r" % type(data))
+
 
     def _output(self, s):
         """Add a line of output to the current request buffer.
@@ -1118,6 +1170,7 @@ class HTTPConnection:
             # message_body was not a string (i.e. it is a file), and
             # we must run the risk of Nagle.
             yield from self.send(message_body)
+
 
 
     def putrequest(self, method, url, skip_host=0, skip_accept_encoding=0):
@@ -1279,11 +1332,11 @@ class HTTPConnection:
             raise CannotSendHeader()
         yield from self._send_output(message_body)
 
+
     @asyncio.coroutine
     def request(self, method, url, body=None, headers={}):
         """Send a complete request to the server."""
         yield from self._send_request(method, url, body, headers)
-        pass
 
     def _set_content_length(self, body):
         # Set the content-length based on the body.
@@ -1362,19 +1415,20 @@ class HTTPConnection:
             raise ResponseNotReady(self.__state)
 
         if self.debuglevel > 0:
-            response = self.response_class(self.sock, self.debuglevel, method=self._method)
+            response = self.response_class(self.reader, self.debuglevel, method=self._method)
         else:
-            response = self.response_class(self.sock, method=self._method)
+            response = self.response_class(self.reader, method=self._method)
         yield from response.init()
 
         yield from response.begin()
         assert response.will_close != _UNKNOWN
         self.__state = _CS_IDLE
 
-        if response.will_close:
-            # this effectively passes the connection to the response
-            self.close()
-        else:
+        if not response.will_close:
+        #     # this effectively passes the connection to the response
+        #     print('will_close is closing(). sock %s' % self.soCk)
+        #     #self.close()
+        # else:
             # remember this, so we can tell when it is complete
             self.__response = response
 
@@ -1421,20 +1475,27 @@ else:
             else:
                 server_hostname = self.host
 
-            self.sock = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
-                                                           self.source_address, ssl=self._context,
-                                                           server_hostname=server_hostname)
+            # self.soCk = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
+            #                                                self.source_address, ssl=self._context,
+            #                                                server_hostname=server_hostname)
+            r, w = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
+                                                      self.source_address, ssl=self._context,
+                                                      server_hostname=server_hostname)
+
+            self.reader = r
+            self.writer = w
 
             if self._tunnel_host:
                 yield from self._tunnel()
                 self.auto_open = 0
 
             #
-            # self.sock = self._context.wrap_socket(self.sock, server_hostname=sni_hostname,
+            # self.soCk = self._context.wrap_socket(self.soCk, server_hostname=sni_hostname,
             #                                       do_handshake_on_connect=False)
+            sock = self.writer.transport.get_extra_info('socket')
             if not self._context.check_hostname and self._check_hostname:
                 try:
-                    ssl.match_hostname(self.sock.getpeercert(), server_hostname)
+                    ssl.match_hostname(sock.getpeercert(), server_hostname)
                 except Exception as e:
                     self.close()
                     raise

@@ -15,35 +15,22 @@ import time
 PY3 = sys.version > '3'
 
 
-class FauxSocket(socket.socket):
+class FauxWriter():
     """subclass of a true socket"""
 
-    def __init__(self, family=socket.AF_INET, type=socket.SOCK_STREAM, sock=None, host=None, port=None, *args, **kwargs):
+    def __init__(self, writer):
         self._data = {'sendall_calls': 0,
                       'send_calls': 0,
                       'data_out': b'',
                       'cue': None,
                       'throw': None}
-        self.host = host
-        self.port = port
-        if sock is not None:
-            super(FauxSocket, self).__init__(family=sock.family, type=sock.type, proto=sock.proto, fileno=sock.fileno())
-            self.settimeout(sock.gettimeout())
-            sock.detach()
-        else:
-            super(FauxSocket, self).__init__(family, type, *args, **kwargs)
+        self._writer = writer
 
-    def sendall(self, data):
+    def write(self, data):
         self._data['sendall_calls'] += 1
         self._data['data_out'] += data
         self.testBreak()
-        return socket.socket.sendall(self, data)
-
-    def send(self, data):
-        self._data['send_calls'] += 1
-        self._data['data_out'] += data
-        self.testBreak()
-        return socket.socket.send(self, data)
+        return self._writer.write(data)
 
     def testBreak(self):
         cue = self._data['cue']

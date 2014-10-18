@@ -1030,7 +1030,7 @@ class HTTPConnection:
         yield from self.send(b'\r\n')
 
         response = self.response_class(self.reader, method=self._method)
-        yield from response.init()
+        #yield from response.init()
         (version, code, message) = yield from response._read_status()
 
         if code != 200:
@@ -1410,7 +1410,7 @@ class HTTPConnection:
             response = self.response_class(self.reader, self.debuglevel, method=self._method)
         else:
             response = self.response_class(self.reader, method=self._method)
-        yield from response.init()
+        #yield from response.init()
 
         yield from response.begin()
         assert response.will_close != _UNKNOWN

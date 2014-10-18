@@ -490,7 +490,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     def _close_conn(self):
         fp = self.fp
         self.fp = None
-        fp.feed_eof()
+        #fp.feed_eof()
         fp._buffer = b''
 
     def close(self):
@@ -707,20 +707,21 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         try:
             d = yield from asyncio.wait_for(self.fp.read(amtLim), timeout)
         except asyncio.TimeoutError as e:
-            self.fp.feed_eof()
-            d = yield from asyncio.wait_for(self.fp.read(), timeout)
+            #self.fp.feed_eof()
+            ln = len(self.fp._buffer)
+            d = yield from asyncio.wait_for(self.fp.read(ln), timeout)
         return d
 
     @asyncio.coroutine
     def _readline_with_timeout(self, timeout=None):
         """in case connection does not see close, and timeout ends read."""
         timeout = timeout or self.TIMEOUT
-        amtLim = min(amt, MAXAMOUNT)
         try:
             d = yield from asyncio.wait_for(self.fp.readline(), timeout)
         except asyncio.TimeoutError as e:
-            self.fp.feed_eof()
-            d = yield from asyncio.wait_for(self.fp.read(), timeout)
+            #self.fp.feed_eof()
+            ln = len(self.fp._buffer)
+            d = yield from asyncio.wait_for(self.fp.read(ln), timeout)
         return d
 
     @asyncio.coroutine
@@ -1066,18 +1067,9 @@ class HTTPConnection:
         """Close the connection to the HTTP server."""
 
         if self.reader:
-            self.reader.feed_eof()
             self.reader._buffer = b''
         if self.writer:
-            self.writer.write_eof()
             self.writer.close()
-        # if self.soCk:
-        #     fNo = self.soCk.fileno()
-        #     if fNo > -1:
-        #         self.loop.remove_reader(fNo)
-        #         self.loop.remove_writer(fNo)
-        #     self.soCk.close()   # close it manually... there may be other refs
-        #     self.soCk = None
         if self.__response:
             self.__response.close()
             self.__response = None

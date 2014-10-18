@@ -292,7 +292,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     # text following RFC 2047.  The basic status line parsing only
     # accepts iso-8859-1.
 
-    def __init__(self, reader, debuglevel=0, method=None, url=None):
+    def __init__(self, reader, debuglevel=0, method=None, url=None, transport=None):
         # If the response includes a content-length header, we need to
         # make sure that the client doesn't read more than the
         # specified number of bytes.  If it does, it will block until
@@ -302,6 +302,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         # clients unless they know what they are doing.
         self.fp = reader
         #self.fp = sock.makefile("rb")
+        self._transport = transport
         self.debuglevel = debuglevel
         self.TIMEOUT = 5.0
         self._method = method
@@ -490,6 +491,8 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
     def _close_conn(self):
         fp = self.fp
         self.fp = None
+        if self._transport:
+            self._transport.close()
         #fp.feed_eof()
         fp._buffer = b''
 
@@ -1029,7 +1032,7 @@ class HTTPConnection:
             yield from self.send(header_bytes)
         yield from self.send(b'\r\n')
 
-        response = self.response_class(self.reader, method=self._method)
+        response = self.response_class(self.reader, method=self._method, transport=self.writer.transport)
         #yield from response.init()
         (version, code, message) = yield from response._read_status()
 
@@ -1407,9 +1410,12 @@ class HTTPConnection:
             raise ResponseNotReady(self.__state)
 
         if self.debuglevel > 0:
-            response = self.response_class(self.reader, self.debuglevel, method=self._method)
+            response = self.response_class(self.reader, self.debuglevel,
+                                           method=self._method,
+                                           transport=self.writer.transport)
         else:
-            response = self.response_class(self.reader, method=self._method)
+            response = self.response_class(self.reader, method=self._method,
+                                           transport=self.writer.transport)
         #yield from response.init()
 
         yield from response.begin()

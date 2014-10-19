@@ -229,18 +229,22 @@ class NotSocket():
         self.readexactly = self.reader.readexactly
         self.readline = self.reader.readline
 
+        self.transportRefCt = 1
+
     @asyncio.coroutine
     def writeAndDrain(self, data):
         self.writer.write(data)
         yield from self.writer.drain()
         
     def close(self):
-        self.writer.transport.close()
-        self.reader = self.writer = None
+        self.transportRefCt -= 1
+        if self.transportRefCt < 1:
+            self.writer.transport.close()
+            self.reader = self.writer = None
         
     def socket(self):
         return self.writer.transport.get_extra_info('socket')
-        
+
 
 class HTTPMessage(email.message.Message):
     # XXX The only usage of this method is in
@@ -288,6 +292,7 @@ def parse_headers(fp, _class=HTTPMessage, timeout=5.0):
         try:
             try:
                 line = yield from asyncio.wait_for(fp.readline(), timeout)
+                #line = fp._readline_with_timeout(timeout)
             except ValueError as e:
                 if 'is too long' in e.args[0]:
                     raise LineTooLong("header line")
@@ -325,6 +330,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
         # self.fp is buffered or not.  So, no self.fp.read() by
         # clients unless they know what they are doing.
         self.fp = notsock
+        notsock.transportRefCt += 1
         self.debuglevel = debuglevel
         self.TIMEOUT = 5.0
         self._method = method

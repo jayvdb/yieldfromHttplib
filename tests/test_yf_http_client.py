@@ -257,6 +257,7 @@ class BasicTest(TestCase):
         def _run1(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
+            r = NotSocket(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             try:
@@ -474,6 +475,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
+            r = NotSocket(r, w)
             r = client.HTTPResponse(r)
             #yield from r.init()
             yield from r.begin()
@@ -535,6 +537,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
+            r = NotSocket(r, w)
             r = client.HTTPResponse(r)
             #yield from r.init()
             try:
@@ -1748,7 +1751,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-
+            r = NotSocket(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('My-Header')
             self.assertEqual(header, 'first-value, second-value')
@@ -1763,6 +1766,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
+            r = NotSocket(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header', 'default-value')
             self.assertEqual(header, 'default-value')
@@ -1774,6 +1778,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
+            r = NotSocket(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header', ['default', 'values'])
             self.assertEqual(header, 'default, values')
@@ -1788,6 +1793,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
+            r = NotSocket(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header')
             self.assertEqual(header, None)
@@ -1799,6 +1805,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
+            r = NotSocket(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header',default=42)
             self.assertEqual(header, 42)

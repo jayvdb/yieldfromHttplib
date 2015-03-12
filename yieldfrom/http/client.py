@@ -1442,10 +1442,12 @@ class HTTPConnection:
         #     # this effectively passes the connection to the response
         #     #self.close()
             self.__response = None
-            self.notSock = None
         else:
             # remember this, so we can tell when it is complete
             self.__response = response
+
+        self.notSock.close()
+        self.notSock = None
 
         return response
 

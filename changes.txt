@@ -1,0 +1,6 @@
+
+version 1.2  (11 March 2015)
+
+  fixes bug that leaked sockets
+
+

@@ -245,6 +245,9 @@ class NotSocket():
     def socket(self):
         return self.writer.transport.get_extra_info('socket')
 
+    def peercert(self):
+        return self.writer.transport.get_extra_info('peercert')
+
 
 class HTTPMessage(email.message.Message):
     # XXX The only usage of this method is in
@@ -937,20 +940,13 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
 def create_connection(address, timeout=None, source_address=None, loop=None,
                       ssl=None, server_hostname=None):
 
-    #def _tmp_protocol():
-    #     return asyncio.Protocol()
-
     if loop is None:
         loop = asyncio.get_event_loop()
     host, port = address
-    #(transport, protocol) = yield from loop.create_connection(asyncio.StreamReader, host, port, ssl=ssl,
-    #                                                          local_addr=source_address)
 
     reader, writer = yield from asyncio.open_connection(host, port, ssl=ssl, limit=_MAXLINE,
                                                      local_addr=source_address)
 
-    #sock = transport.get_extra_info('socket')
-    #return sock
     return NotSocket(reader, writer)
 
 
@@ -1080,7 +1076,6 @@ class HTTPConnection:
     def connect(self):
         """Connect to the host and port specified in __init__."""
 
-        #t, p = yield from self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
         s = yield from self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
 
         self.notSock = s
@@ -1492,9 +1487,6 @@ else:
             else:
                 server_hostname = self.host
 
-            # self.soCk = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
-            #                                                self.source_address, ssl=self._context,
-            #                                                server_hostname=server_hostname)
             ns = yield from self._create_connection((self.host, self.port), self.TIMEOUT,
                                                       self.source_address, ssl=self._context,
                                                       server_hostname=server_hostname)
@@ -1506,12 +1498,9 @@ else:
                 self.auto_open = 0
 
             #
-            # self.soCk = self._context.wrap_socket(self.soCk, server_hostname=sni_hostname,
-            #                                       do_handshake_on_connect=False)
-            sock = self.notSock.socket()
             if not self._context.check_hostname and self._check_hostname:
                 try:
-                    ssl.match_hostname(sock.getpeercert(), server_hostname)
+                    ssl.match_hostname(self.notSock.peercert(), server_hostname)
                 except Exception as e:
                     self.close()
                     raise

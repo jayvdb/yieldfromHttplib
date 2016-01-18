@@ -1509,7 +1509,7 @@ class HTTPSTest(TestCase):
             self._check_svn_python_org(resp)
 
     @async_test
-    def test_networked_good_cert(self):
+    def tst_networked_good_cert(self):
         # We feed a CA cert that validates the server's cert
         import ssl
         support.requires('network')

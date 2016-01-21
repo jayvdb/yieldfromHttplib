@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     packages = ['yieldfrom', 'yieldfrom.http'], #find_packages(), #['http', 'yieldfrom.http'],
     package_dir = {'yieldfrom': 'yieldfrom'},
-    version = '0.1.3',
+    version = '0.2.0',
     namespace_packages = ['yieldfrom'],
     name = 'yieldfrom.http.client',
     description = 'asyncio version of http.client',

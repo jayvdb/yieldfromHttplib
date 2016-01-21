@@ -218,7 +218,7 @@ _MAXLINE = 65536
 _MAXHEADERS = 100
 
 
-class NotSocket():
+class ReaderWriterPair():
     
     def __init__(self, reader, writer):
         self.reader = reader
@@ -858,7 +858,7 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
             ret = yield from self._chunked_readline()
         #result = yield from asyncio.wait_for(self.fp.readline(), self.TIMEOUT)
         result = yield from self._readline_with_timeout()
-        if not result and limit:
+        if not result:
             self._close_conn()
         return result
 
@@ -871,36 +871,6 @@ class HTTPResponse(io.IOBase): #io.BufferedIOBase):
             line = yield from self.readline()
             lines.append(line)
         return lines
-
-    # @asyncio.coroutine
-    # def _read1_chunked(self, n):
-    #     # Strictly speaking, _get_chunk_left() may cause more than one read,
-    #     # but that is ok, since that is to satisfy the chunked protocol.
-    #     chunk_left = self._get_chunk_left()
-    #     if chunk_left is None or n == 0:
-    #         return b''
-    #     if not (0 <= n <= chunk_left):
-    #         n = chunk_left # if n is negative or larger than chunk_left
-    #     read = yield from self.fp.read1(n)
-    #     self.chunk_left -= len(read)
-    #     if not read:
-    #         raise IncompleteRead(b"")
-    #     return read
-
-    # @asyncio.coroutine
-    # def _peek_chunked(self, n):
-    #     # Strictly speaking, _get_chunk_left() may cause more than one read,
-    #     # but that is ok, since that is to satisfy the chunked protocol.
-    #     try:
-    #         chunk_left = self._get_chunk_left()
-    #     except IncompleteRead:
-    #         return b'' # peek doesn't worry about protocol
-    #     if chunk_left is None:
-    #         return b'' # eof
-    #     # peek is allowed to return more than requested.  Just request the
-    #     # entire chunk, and truncate what we get.
-    #     r = yield from self.fp.peek(chunk_left)[:chunk_left]
-    #     return r
 
     def fileno(self):
         return None #self.fp.fileno()
@@ -947,7 +917,7 @@ def create_connection(address, timeout=None, source_address=None, loop=None,
     reader, writer = yield from asyncio.open_connection(host, port, ssl=ssl, limit=_MAXLINE,
                                                      local_addr=source_address)
 
-    return NotSocket(reader, writer)
+    return ReaderWriterPair(reader, writer)
 
 
 class HTTPConnection:
@@ -975,7 +945,7 @@ class HTTPConnection:
             timeout = 30.0
         self.TIMEOUT = timeout
         self.source_address = source_address
-        self.notSock = None
+        self.readwritepair = None
         self._buffer = []
         self.__response = None
         self.__state = _CS_IDLE
@@ -1005,7 +975,7 @@ class HTTPConnection:
         with the CONNECT request.
         """
 
-        if self.notSock:
+        if self.readwritepair:
             raise RuntimeError("Can't set up tunnel for established connection")
 
         self._tunnel_host = host
@@ -1051,7 +1021,7 @@ class HTTPConnection:
             yield from self.send(header_bytes)
         yield from self.send(b'\r\n')
 
-        response = self.response_class(self.notSock, method=self._method)
+        response = self.response_class(self.readwritepair, method=self._method)
         #yield from response.init()
         (version, code, message) = yield from response._read_status()
 
@@ -1078,7 +1048,7 @@ class HTTPConnection:
 
         s = yield from self._create_connection((self.host, self.port), self.TIMEOUT, self.source_address)
 
-        self.notSock = s
+        self.readwritepair = s
 
         if self._tunnel_host:
             yield from self._tunnel()
@@ -1086,9 +1056,9 @@ class HTTPConnection:
     def close(self):
         """Close the connection to the HTTP server."""
 
-        if self.notSock:
-            self.notSock.close()
-            self.notSock = None
+        if self.readwritepair:
+            self.readwritepair.close()
+            self.readwritepair = None
         if self.__response:
             self.__response.close()
             self.__response = None
@@ -1101,7 +1071,7 @@ class HTTPConnection:
         file-like object that supports a .read() method, or an iterable object.
         """
 
-        if self.notSock is None:
+        if self.readwritepair is None:
             if self.auto_open:
                 yield from self.connect()
             else:
@@ -1132,17 +1102,17 @@ class HTTPConnection:
                 if encode:
                     datablock = datablock.encode("iso-8859-1")
                 # yield from self.loop.sock_sendall(self.soCk, datablock)
-                yield from self.notSock.writeAndDrain(datablock)
+                yield from self.readwritepair.writeAndDrain(datablock)
             return
         try:
             # yield from self.loop.sock_sendall(self.soCk, data)
-            yield from self.notSock.writeAndDrain(data)
+            yield from self.readwritepair.writeAndDrain(data)
         except TypeError:
             if isinstance(data, collections.Iterable):
                  for d in data:
                      #yield from self.loop.sock_sendall(self.soCk, d)
                      #d = chr(d).encode('ascii')
-                     yield from self.notSock.writeAndDrain(d)
+                     yield from self.readwritepair.writeAndDrain(d)
             else:
                  raise TypeError("data should be a bytes-like object, got %r" % type(data))
 
@@ -1423,10 +1393,10 @@ class HTTPConnection:
             raise ResponseNotReady(self.__state)
 
         if self.debuglevel > 0:
-            response = self.response_class(self.notSock, self.debuglevel,
+            response = self.response_class(self.readwritepair, self.debuglevel,
                                            method=self._method)
         else:
-            response = self.response_class(self.notSock, method=self._method)
+            response = self.response_class(self.readwritepair, method=self._method)
         #yield from response.init()
 
         yield from response.begin()
@@ -1441,8 +1411,8 @@ class HTTPConnection:
             # remember this, so we can tell when it is complete
             self.__response = response
 
-        self.notSock.close()
-        self.notSock = None
+        self.readwritepair.close()
+        self.readwritepair = None
 
         return response
 
@@ -1491,7 +1461,7 @@ else:
                                                       self.source_address, ssl=self._context,
                                                       server_hostname=server_hostname)
 
-            self.notSock = ns
+            self.readwritepair = ns
 
             if self._tunnel_host:
                 yield from self._tunnel()
@@ -1500,7 +1470,7 @@ else:
             #
             if not self._context.check_hostname and self._check_hostname:
                 try:
-                    ssl.match_hostname(self.notSock.peercert(), server_hostname)
+                    ssl.match_hostname(self.readwritepair.peercert(), server_hostname)
                 except Exception as e:
                     self.close()
                     raise

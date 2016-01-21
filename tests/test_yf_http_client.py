@@ -16,7 +16,7 @@ from yieldfrom.http import client
 import testtcpserver as server
 from testtcpserver import RECEIVE, FauxWriter
 
-NotSocket = client.NotSocket
+RwPair = client.ReaderWriterPair
 
 TestCase = unittest.TestCase
 
@@ -233,7 +233,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -257,7 +257,7 @@ class BasicTest(TestCase):
         def _run1(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             try:
@@ -284,7 +284,7 @@ class BasicTest(TestCase):
             # same behaviour than when we read the whole thing with read()
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -310,7 +310,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -341,7 +341,7 @@ class BasicTest(TestCase):
             # all data was read
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -369,7 +369,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -396,7 +396,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -420,7 +420,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -475,7 +475,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             r = client.HTTPResponse(r)
             #yield from r.init()
             yield from r.begin()
@@ -495,7 +495,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="HEAD")
             #yield from resp.init()
             yield from resp.begin()
@@ -516,7 +516,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="HEAD")
             #yield from resp.init()
             yield from resp.begin()
@@ -537,7 +537,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             r = client.HTTPResponse(r)
             #yield from r.init()
             try:
@@ -672,10 +672,9 @@ class BasicTest(TestCase):
         def _run(host, port):
 
             r, w = yield from asyncio.open_connection(host, port)
-            ns = NotSocket(r,w)
+            ns = RwPair(r, w)
             w.write(b' ')
             resp = client.HTTPResponse(ns, method="GET")
-            #yield from resp.init()
             yield from resp.begin()
             r1 = yield from resp.read()
             self.assertEqual(r1, expected)
@@ -688,9 +687,8 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            ns = NotSocket(r,w)
+            ns = RwPair(r, w)
             resp = client.HTTPResponse(ns, method="GET")
-            #yield from resp.init()
             yield from resp.begin()
             try:
                 yield from resp.read()
@@ -703,7 +701,6 @@ class BasicTest(TestCase):
                 self.fail('IncompleteRead expected')
             finally:
                 resp.close()
-                #sock.close()
 
         _run_with_server(_run2, chunked_start + 'foo\r\n')
 
@@ -718,7 +715,7 @@ class BasicTest(TestCase):
 
                 r, w = yield from asyncio.open_connection(host, port)
                 w.write(b' ')
-                r = NotSocket(r,w)
+                r = RwPair(r, w)
                 resp = client.HTTPResponse(r, method="GET")
                # yield from resp.init()
                 yield from resp.begin()
@@ -748,7 +745,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -763,7 +760,7 @@ class BasicTest(TestCase):
         def _run1(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -793,7 +790,7 @@ class BasicTest(TestCase):
             def _run(host, port):
                 r, w = yield from asyncio.open_connection(host, port)
                 w.write(b' ')
-                r = NotSocket(r,w)
+                r = RwPair(r, w)
                 resp = client.HTTPResponse(r, method="GET")
                 #yield from resp.init()
                 yield from resp.begin()
@@ -828,7 +825,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="HEAD")
             #yield from resp.init()
             yield from resp.begin()
@@ -860,7 +857,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="HEAD")
             #yield from resp.init()
             yield from resp.begin()
@@ -886,7 +883,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -903,7 +900,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -933,7 +930,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             conn = client.HTTPConnection("example.com")
             sock = FauxWriter(sock=r)
             sock.breakOn(b'Content', OSError(errno.EPIPE, 'gotcha'))
@@ -977,7 +974,7 @@ class BasicTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             try:
@@ -999,7 +996,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             try:
@@ -1027,7 +1024,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -1049,7 +1046,7 @@ class BasicTest(TestCase):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
             #sock = FakeSocket(body)
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r)
             #yield from resp.init()
             yield from resp.begin()
@@ -1072,7 +1069,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             conn = client.HTTPConnection('example.com')
             sock = FauxWriter(r)
             conn.writer = sock
@@ -1089,7 +1086,7 @@ class BasicTest(TestCase):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
             conn = client.HTTPConnection('example.com')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             sock = FauxWriter(r)
             conn.writer = sock
             body = b'x' * conn.mss * 2
@@ -1107,7 +1104,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -1127,7 +1124,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -1147,7 +1144,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -1171,7 +1168,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -1197,7 +1194,7 @@ class BasicTest(TestCase):
 
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r,w)
+            r = RwPair(r, w)
             resp = client.HTTPResponse(r, method="GET")
             #yield from resp.init()
             yield from resp.begin()
@@ -1751,7 +1748,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('My-Header')
             self.assertEqual(header, 'first-value, second-value')
@@ -1766,7 +1763,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header', 'default-value')
             self.assertEqual(header, 'default-value')
@@ -1778,7 +1775,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header', ['default', 'values'])
             self.assertEqual(header, 'default, values')
@@ -1793,7 +1790,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header')
             self.assertEqual(header, None)
@@ -1805,7 +1802,7 @@ class HTTPResponseTest(TestCase):
         def _run(host, port):
             r, w = yield from asyncio.open_connection(host, port)
             w.write(b' ')
-            r = NotSocket(r, w)
+            r = RwPair(r, w)
             yield from self._setUp(r)
             header = self.resp.getheader('No-Such-Header',default=42)
             self.assertEqual(header, 42)

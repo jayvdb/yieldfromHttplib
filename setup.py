@@ -14,6 +14,6 @@ setup(
     license = 'Python Software Foundation License',
 
     keywords = 'asyncio, http, http.client',
-    url = 'http://github.com/rdbhost/',
+    url = 'https://github.com/rdbhost/yieldfromHttplib/',
     zip_safe=False,
     )
